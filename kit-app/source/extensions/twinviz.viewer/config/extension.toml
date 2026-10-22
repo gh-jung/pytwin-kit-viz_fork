@@ -24,6 +24,7 @@ readme  = "docs/README.md"  # Path (relative to the root) or content of readme m
 "omni.kit.uiapp" = {}
 "omni.kit.pip_archive" = {}  # numpy
 "omni.usd" = {}
+"usdrt.scenegraph" = {}
 "omni.kit.viewport.utility" = {}
 
 
@@ -35,6 +36,8 @@ exts."twinviz.viewer".worker_python = ""
 exts."twinviz.viewer".models_dir = ""
 # Length unit of TBROM point coordinates (Ansys results are SI).
 exts."twinviz.viewer".model_units_in_meters = 1.0
+# Per-frame writes: "fabric" (USDRT, fast; USD layer keeps the initial values) or "usd".
+exts."twinviz.viewer".write_backend = "fabric"
 
 
 [[python.module]]  # Main python module this extension provides, it will be publicly available as "import twinviz.viewer"

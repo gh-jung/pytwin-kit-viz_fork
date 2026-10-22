@@ -52,7 +52,7 @@ def scalarize(values):
     """Field values (N,) or (N, k) -> (N,) float32; vectors use their magnitude."""
     values = np.asarray(values, dtype=np.float32)
     if values.ndim == 2:
-        return np.linalg.norm(values, axis=1)
+        return np.sqrt(np.einsum("ij,ij->i", values, values))
     return values
 
 
@@ -63,11 +63,11 @@ def apply(scalars, vmin, vmax, name="turbo", linear=True):
     which is what USD ``displayColor`` and RTX expect.
     """
     lut = _lut(name, linear)
-    scalars = np.nan_to_num(scalars, nan=vmin, posinf=vmax, neginf=vmin)
     span = vmax - vmin
     if not np.isfinite(span) or span <= 0:
-        idx = np.zeros(scalars.shape, dtype=np.int32)
-    else:
-        t = (scalars - vmin) * ((_LUT_SIZE - 1) / span)
-        idx = np.clip(t, 0, _LUT_SIZE - 1).astype(np.int32)
-    return lut[idx]
+        return np.take(lut, np.zeros(np.shape(scalars), dtype=np.intp), axis=0)
+    t = np.subtract(scalars, np.float32(vmin), dtype=np.float32)
+    t *= np.float32((_LUT_SIZE - 1) / span)
+    np.nan_to_num(t, copy=False, nan=0.0, posinf=_LUT_SIZE - 1, neginf=0.0)
+    np.clip(t, 0, _LUT_SIZE - 1, out=t)
+    return np.take(lut, t.astype(np.intp), axis=0)

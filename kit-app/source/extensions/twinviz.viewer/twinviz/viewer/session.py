@@ -16,10 +16,10 @@ STATIC_FRAME_TIMEOUT_S = 30.0
 
 
 class TwinSession:
-    def __init__(self, python_exe, worker_root, units_in_meters=1.0):
+    def __init__(self, python_exe, worker_root, units_in_meters=1.0, write_backend="fabric"):
         self.worker = WorkerProcess(python_exe, worker_root)
         self.client = TwinClient()
-        self.updater = StageUpdater(units_in_meters)
+        self.updater = StageUpdater(units_in_meters, write_backend)
 
         self.model_info = None
         self.mesh_stats = {}

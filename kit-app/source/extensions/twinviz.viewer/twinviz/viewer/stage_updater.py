@@ -1,5 +1,12 @@
-"""Mirrors the latest worker geometry/frame into USD on Kit's update tick."""
+"""Mirrors the latest worker geometry/frame into USD on Kit's update tick.
 
+Prims are authored in USD once per model. Per-frame work is split in two:
+``prepare`` (colormap, deformation; pure numpy) runs on a background thread, and
+``commit`` writes the resulting arrays on the main thread, either straight into
+Fabric through USDRT (default, skips USD change processing) or into USD.
+"""
+
+import concurrent.futures
 import re
 
 import carb
@@ -21,6 +28,13 @@ EMISSION_PRIMVAR = "fieldEmission"
 
 DISPLAY_POINTS = "points"
 DISPLAY_MESH = "mesh"
+
+BACKEND_FABRIC = "fabric"
+BACKEND_USD = "usd"
+
+ATTR_POINTS = "points"
+ATTR_COLOR = "primvars:displayColor"
+ATTR_EMISSION = f"primvars:{EMISSION_PRIMVAR}"
 
 
 def _prim_name(name):
@@ -63,6 +77,52 @@ def _extent(points):
     return Vt.Vec3fArray([Gf.Vec3f(*map(float, lo)), Gf.Vec3f(*map(float, hi))])
 
 
+class _ArrayWriter:
+    """Writes Vec3f arrays to one prim through USDRT/Fabric or plain USD."""
+
+    def __init__(self, prim, backend):
+        self.prim = prim
+        self.backend = backend
+        self._attrs = {}
+        self._rt_prim = None
+
+    def set(self, name, array):
+        array = np.ascontiguousarray(array, dtype=np.float32)
+        if self.backend == BACKEND_FABRIC:
+            try:
+                self._fabric_attr(name).Set(_usdrt().Vt.Vec3fArray(array))
+                return
+            except Exception as exc:
+                carb.log_warn(f"[twinviz.viewer] Fabric write failed ({exc}); falling back to USD")
+                self.backend = BACKEND_USD
+                self._attrs.clear()
+        attr = self._attrs.get(name)
+        if attr is None:
+            attr = self._attrs[name] = self.prim.GetAttribute(name)
+        attr.Set(Vt.Vec3fArray.FromNumpy(array))
+
+    def get(self, name):
+        """Current value as numpy, read from whichever backend is written to."""
+        if self.backend == BACKEND_FABRIC:
+            return np.array(self._fabric_attr(name).Get(), dtype=np.float32)
+        return np.array(self.prim.GetAttribute(name).Get(), dtype=np.float32)
+
+    def _fabric_attr(self, name):
+        attr = self._attrs.get(name)
+        if attr is None:
+            if self._rt_prim is None:
+                rt_stage = _usdrt().Usd.Stage.Attach(omni.usd.get_context().get_stage_id())
+                self._rt_prim = rt_stage.GetPrimAtPath(str(self.prim.GetPath()))
+            attr = self._attrs[name] = self._rt_prim.GetAttribute(name)
+        return attr
+
+
+def _usdrt():
+    import usdrt
+
+    return usdrt
+
+
 class _Layer:
     """A colored point set backed by one prim: the TBROM points or a mapped mesh surface.
 
@@ -70,16 +130,16 @@ class _Layer:
     the vertices are the TBROM points themselves.
     """
 
-    def __init__(self, geom, base_points, index=None):
+    def __init__(self, geom, base_points, backend, index=None):
         self.geom = geom
         self.base_points = np.ascontiguousarray(base_points, dtype=np.float32)
         self.index = index
-        self._points_attr = geom.GetPointsAttr()
-        self._color_attr = geom.CreateDisplayColorPrimvar(UsdGeom.Tokens.vertex).GetAttr()
-        self._color_attr.Set(Vt.Vec3fArray.FromNumpy(np.full_like(self.base_points, 0.5)))
-        self._emission_attr = UsdGeom.PrimvarsAPI(geom).CreatePrimvar(
-            EMISSION_PRIMVAR, Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.vertex).GetAttr()
-        self._emission_attr.Set(Vt.Vec3fArray.FromNumpy(np.zeros_like(self.base_points)))
+        geom.CreateDisplayColorPrimvar(UsdGeom.Tokens.vertex).Set(
+            Vt.Vec3fArray.FromNumpy(np.full_like(self.base_points, 0.5)))
+        UsdGeom.PrimvarsAPI(geom).CreatePrimvar(
+            EMISSION_PRIMVAR, Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.vertex
+        ).Set(Vt.Vec3fArray.FromNumpy(np.zeros_like(self.base_points)))
+        self.writer = _ArrayWriter(geom.GetPrim(), backend)
         self._deformed = False
         if index is not None:
             self._valid = index >= 0
@@ -89,33 +149,39 @@ class _Layer:
         img = UsdGeom.Imageable(self.geom)
         img.MakeVisible() if visible else img.MakeInvisible()
 
-    def apply(self, values, scalars, vrange, style, deform_scale):
+    def prepare(self, values, scalars, vrange, cmap, deform_scale):
+        """Arrays to write for one frame. Pure numpy: safe off the main thread."""
         if self.index is not None:
-            values = values[self._safe_index]
+            values = values[self._safe_index] if deform_scale else None
             scalars = scalars[self._safe_index]
-        colors = colormap.apply(scalars, *vrange, style["colormap"])
+        colors = colormap.apply(scalars, *vrange, cmap)
         if self.index is not None:
             colors[~self._valid] = UNMAPPED_COLOR
-        with Sdf.ChangeBlock():
-            self._color_attr.Set(Vt.Vec3fArray.FromNumpy(colors))
-            self._emission_attr.Set(Vt.Vec3fArray.FromNumpy(colors * np.float32(EMISSION_GAIN)))
-            if deform_scale:
-                disp = values * np.float32(deform_scale)
-                if self.index is not None:
-                    disp[~self._valid] = 0.0
-                pts = np.ascontiguousarray(self.base_points + disp)
-                self._points_attr.Set(Vt.Vec3fArray.FromNumpy(pts))
-                self._deformed = True
-            elif self._deformed:
-                self._points_attr.Set(Vt.Vec3fArray.FromNumpy(self.base_points))
-                self._deformed = False
+        out = {ATTR_COLOR: colors, ATTR_EMISSION: colors * np.float32(EMISSION_GAIN)}
+        if deform_scale:
+            disp = values * np.float32(deform_scale)
+            if self.index is not None:
+                disp[~self._valid] = 0.0
+            out[ATTR_POINTS] = self.base_points + disp
+        return out
+
+    def commit(self, arrays):
+        for name in (ATTR_COLOR, ATTR_EMISSION):
+            self.writer.set(name, arrays[name])
+        if ATTR_POINTS in arrays:
+            self.writer.set(ATTR_POINTS, arrays[ATTR_POINTS])
+            self._deformed = True
+        elif self._deformed:
+            self.writer.set(ATTR_POINTS, self.base_points)
+            self._deformed = False
 
 
 class FieldView:
     """Prims for one TBROM: always a ``UsdGeom.Points`` cloud, optionally a mapped mesh."""
 
-    def __init__(self, stage, rom, points):
+    def __init__(self, stage, rom, points, backend):
         self.rom = rom
+        self.backend = backend
         self.n_points = len(points)
         self.path = Sdf.Path(f"{ROOT_PATH}/{_prim_name(rom)}")
         self.mesh_path = None
@@ -131,7 +197,7 @@ class FieldView:
         geom.CreateWidthsAttr().Set(Vt.FloatArray([width]))
         geom.SetWidthsInterpolation(UsdGeom.Tokens.constant)
         _bind(geom.GetPrim(), UsdShade.Material.Get(stage, MATERIAL_PATH))
-        self.points_layer = _Layer(geom, base)
+        self.points_layer = _Layer(geom, base, backend)
         self.mesh_layer = None
 
     @property
@@ -150,37 +216,53 @@ class FieldView:
         mesh.CreateSubdivisionSchemeAttr().Set(UsdGeom.Tokens.none)
         mesh.CreateDoubleSidedAttr().Set(True)
         _bind(mesh.GetPrim(), UsdShade.Material.Get(stage, MATERIAL_PATH))
-        self.mesh_layer = _Layer(mesh, points, np.asarray(index, dtype=np.int64))
+        self.mesh_layer = _Layer(mesh, points, self.backend, np.asarray(index, dtype=np.int64))
 
-    def set_display(self, display):
+    def active_layer(self, display):
         use_mesh = display == DISPLAY_MESH and self.mesh_layer is not None
-        self.points_layer.set_visible(not use_mesh)
-        if self.mesh_layer is not None:
-            self.mesh_layer.set_visible(use_mesh)
         return self.mesh_layer if use_mesh else self.points_layer
 
-    def apply(self, values, style):
-        """Write colors (and displaced points for vector fields) for one frame."""
+    def set_display(self, display):
+        active = self.active_layer(display)
+        self.points_layer.set_visible(active is self.points_layer)
+        if self.mesh_layer is not None:
+            self.mesh_layer.set_visible(active is self.mesh_layer)
+        return active
+
+    def prepare(self, values, style):
+        """Colormap/deformation for one frame (background thread). Returns None to skip."""
         values = np.asarray(values, dtype=np.float32)
-        self.is_vector = values.ndim == 2 and values.shape[1] == 3
+        is_vector = values.ndim == 2 and values.shape[1] == 3
         scalars = colormap.scalarize(values)
         if scalars.shape[0] != self.n_points:
             carb.log_warn(f"[twinviz.viewer] {self.rom}: {scalars.shape[0]} values for "
                           f"{self.n_points} points; skipping frame")
-            return
+            return None
         if style["auto_range"]:
-            self.range = (float(np.nanmin(scalars)), float(np.nanmax(scalars)))
+            vrange = (float(np.nanmin(scalars)), float(np.nanmax(scalars)))
         else:
-            self.range = (style["vmin"], style["vmax"])
-        deform = style["deform_scale"] if self.is_vector else 0.0
+            vrange = (style["vmin"], style["vmax"])
+        deform = style["deform_scale"] if is_vector else 0.0
         # Only the visible representation is updated; restyle() re-applies on switch.
-        layer = self.set_display(style["display"])
-        layer.apply(values, scalars, self.range, style, deform)
+        layer = self.active_layer(style["display"])
+        return layer, layer.prepare(values, scalars, vrange, style["colormap"], deform), vrange, is_vector
+
+    def commit(self, prepared, display):
+        layer, arrays, self.range, self.is_vector = prepared
+        self.set_display(display)
+        layer.commit(arrays)
+
+    def apply(self, values, style):
+        """prepare + commit on the calling thread."""
+        prepared = self.prepare(values, style)
+        if prepared is not None:
+            self.commit(prepared, style["display"])
 
 
 class StageUpdater:
-    def __init__(self, units_in_meters=1.0):
+    def __init__(self, units_in_meters=1.0, backend=BACKEND_FABRIC):
         self.units_in_meters = units_in_meters
+        self.backend = backend
         self.style = {
             "colormap": "turbo",
             "auto_range": True,
@@ -196,6 +278,11 @@ class StageUpdater:
         self._pending_meshes = None
         self._pending_frame = None
         self._last_frame = None
+        self._executor = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="twinviz-prepare")
+        self._job = None          # (future, generation, display, style_version)
+        self.style_version = 0          # bumped by restyle()
+        self.applied_style_version = 0  # style of the last committed frame
+        self._generation = 0      # bumped when prims are rebuilt; stale jobs are dropped
         self._sub = carb.eventdispatcher.get_eventdispatcher().observe_event(
             event_name=omni.kit.app.GLOBAL_EVENT_UPDATE,
             observer_name="twinviz.viewer.StageUpdater",
@@ -204,6 +291,8 @@ class StageUpdater:
 
     def destroy(self):
         self._sub = None
+        self._job = None
+        self._executor.shutdown(wait=False, cancel_futures=True)
         self.views.clear()
 
     @property
@@ -226,6 +315,7 @@ class StageUpdater:
     def restyle(self, **style):
         """Change colormap/range/deformation/display and re-apply the last frame."""
         self.style.update(style)
+        self.style_version += 1
         if self._pending_frame is None and self._last_frame is not None:
             self._pending_frame = self._last_frame
 
@@ -237,13 +327,27 @@ class StageUpdater:
         self._remove_prims()
 
     def _remove_prims(self):
+        self._generation += 1
         self.views.clear()
         stage = omni.usd.get_context().get_stage()
         if stage and stage.GetPrimAtPath(ROOT_PATH):
             stage.RemovePrim(ROOT_PATH)
 
+    @property
+    def settled(self):
+        """Nothing queued or in flight, and the latest style is on screen."""
+        return (self._pending_frame is None and self._job is None
+                and self.applied_style_version == self.style_version)
+
+    def read_attr(self, rom, name, mesh=False):
+        """Read back a per-vertex array as rendered (Fabric or USD); for tests and tools."""
+        view = self.views[rom]
+        layer = view.mesh_layer if mesh else view.points_layer
+        return layer.writer.get(name)
+
     def _on_update(self):
-        if self._pending_geometry is None and self._pending_meshes is None and self._pending_frame is None:
+        if (self._pending_geometry is None and self._pending_meshes is None
+                and self._pending_frame is None and self._job is None):
             return
         try:
             if self._pending_geometry is not None:
@@ -252,18 +356,41 @@ class StageUpdater:
             if self._pending_meshes is not None and self.views:
                 arrays, self._pending_meshes = self._pending_meshes, None
                 self._attach_meshes(arrays)
-            if self._pending_frame is not None and self.views:
+            self._commit_finished_job()
+            if self._pending_frame is not None and self.views and self._job is None:
                 frame, self._pending_frame = self._pending_frame, None
                 self._last_frame = frame
-                _, arrays = frame
-                for rom, values in arrays.items():
-                    view = self.views.get(rom)
-                    if view is not None:
-                        view.apply(values, self.style)
-                self.frames_applied += 1
+                self._submit(frame)
         except Exception as exc:
             carb.log_error(f"[twinviz.viewer] stage update failed: {exc}")
             self._pending_frame = None
+            self._job = None
+
+    def _submit(self, frame):
+        _, arrays = frame
+        style = dict(self.style)
+        views = dict(self.views)
+
+        def prepare():
+            return {rom: views[rom].prepare(values, style)
+                    for rom, values in arrays.items() if rom in views}
+
+        self._job = (self._executor.submit(prepare), self._generation, style["display"], self.style_version)
+
+    def _commit_finished_job(self):
+        if self._job is None or not self._job[0].done():
+            return
+        future, generation, display, style_version = self._job
+        self._job = None
+        if generation != self._generation:
+            return  # prims were rebuilt while preparing
+        results = future.result()
+        with Sdf.ChangeBlock():
+            for rom, prepared in results.items():
+                if prepared is not None:
+                    self.views[rom].commit(prepared, display)
+        self.frames_applied += 1
+        self.applied_style_version = style_version
 
     def _build(self, arrays):
         stage = omni.usd.get_context().get_stage()
@@ -278,7 +405,7 @@ class StageUpdater:
         root.AddScaleOp().Set(Gf.Vec3f(scale, scale, scale))
         _define_field_material(stage)
         for rom, points in arrays.items():
-            self.views[rom] = FieldView(stage, rom, points)
+            self.views[rom] = FieldView(stage, rom, points, self.backend)
         if self.on_geometry_built is not None:
             self.on_geometry_built([str(v.path) for v in self.views.values()])
 

@@ -57,8 +57,9 @@ class TwinVizExtension(omni.ext.IExt):
         python_exe, worker_root = _resolve_worker_paths(ext_id)
         models_dir = settings.get(f"{SETTINGS_ROOT}/models_dir") or str(worker_root.parent / "models")
         units = settings.get(f"{SETTINGS_ROOT}/model_units_in_meters") or 1.0
+        backend = settings.get(f"{SETTINGS_ROOT}/write_backend") or "fabric"
 
-        self._session = TwinSession(python_exe, worker_root, units_in_meters=units)
+        self._session = TwinSession(python_exe, worker_root, units_in_meters=units, write_backend=backend)
         self._window = TwinVizWindow(self._session, models_dir)
         carb.log_info(f"[twinviz.viewer] worker python: {python_exe}, models: {models_dir}")
 

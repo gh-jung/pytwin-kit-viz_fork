@@ -26,9 +26,9 @@ async def wait_until(predicate, timeout=60.0):
         await app.next_update_async()
 
 
-def colors_of(path):
-    prim = omni.usd.get_context().get_stage().GetPrimAtPath(path)
-    return np.array(UsdGeom.PrimvarsAPI(prim).GetPrimvar("displayColor").Get())
+def colors_of(session, view, mesh=False):
+    """Colors as rendered: per-frame values may live only in Fabric."""
+    return session.updater.read_attr(view.rom, "primvars:displayColor", mesh=mesh)
 
 
 class TestColormap(omni.kit.test.AsyncTestCase):
@@ -50,12 +50,16 @@ class TestColormap(omni.kit.test.AsyncTestCase):
 
 
 class TestViewer(omni.kit.test.AsyncTestCase):
+    """Runs with the default Fabric backend; TestViewerUsdBackend repeats it on USD."""
+
+    backend = "fabric"
+
     async def setUp(self):
         await omni.usd.get_context().new_stage_async()
         ext_id = omni.kit.app.get_app().get_extension_manager().get_enabled_extension_id("twinviz.viewer")
         python_exe, worker_root = _resolve_worker_paths(ext_id)
         self.models = worker_root.parent / "models"
-        self.session = TwinSession(python_exe, worker_root)
+        self.session = TwinSession(python_exe, worker_root, write_backend=self.backend)
 
     async def tearDown(self):
         await self.session.stop_worker()
@@ -78,7 +82,7 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         self.assertEqual(len(points.GetPointsAttr().Get()), 1332)
         self.assertEqual(self.session.mode, "dynamic")
 
-        base_colors = colors_of(view.path)
+        base_colors = colors_of(self.session, view)
         self.session.set_input("Force_X_Component", 5.0)
         await self.session.start(step_size=0.05, realtime=False)
         await wait_until(lambda: self.session.last_frame["step"] > 5)
@@ -86,12 +90,12 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         n = self.session.updater.frames_applied
         await wait_until(lambda: self.session.updater.frames_applied > n or not self.session.running)
         self.assertTrue(view.is_vector)
-        self.assertFalse(np.allclose(colors_of(view.path), base_colors))
+        self.assertFalse(np.allclose(colors_of(self.session, view), base_colors))
 
         # Deformation moves the points away from the undeformed positions.
         self.session.updater.restyle(deform_scale=1000.0)
-        await omni.kit.app.get_app().next_update_async()
-        moved = np.array(points.GetPointsAttr().Get())
+        await wait_until(lambda: self.session.updater.settled)
+        moved = self.session.updater.read_attr(view.rom, "points")
         self.assertGreater(np.abs(moved - view.base_points).max(), 0.0)
 
     async def test_fea_mesh_mapping(self):
@@ -112,14 +116,13 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         await self.session.pause()
         n = self.session.updater.frames_applied
         await wait_until(lambda: self.session.updater.frames_applied > n)
-        colors = colors_of(view.mesh_path)
+        colors = colors_of(self.session, view, mesh=True)
         self.assertEqual(len(colors), n_vertices)
         self.assertGreater(np.ptp(colors, axis=0).max(), 0.3)  # a real gradient, not one color
 
         # Switching to points shows the cloud and hides the mesh.
         self.session.updater.restyle(display="points")
-        await omni.kit.app.get_app().next_update_async()
-        await omni.kit.app.get_app().next_update_async()
+        await wait_until(lambda: self.session.updater.settled)
         self.assertEqual(UsdGeom.Imageable(stage.GetPrimAtPath(view.mesh_path)).ComputeVisibility(),
                          UsdGeom.Tokens.invisible)
 
@@ -131,5 +134,9 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         await wait_until(lambda: self.session.last_frame["inputs"]["side_inlet_temperature"] == 400.0)
         await wait_until(lambda: abs(view.range[1] - 400.0) < 1.0)
         self.assertAlmostEqual(view.range[0], 280.0, delta=1.0)
-        self.assertEqual(len(colors_of(view.path)), 139868)
+        self.assertEqual(len(colors_of(self.session, view)), 139868)
         self.assertTrue(omni.usd.get_context().get_stage().GetPrimAtPath(ROOT_PATH))
+
+
+class TestViewerUsdBackend(TestViewer):
+    backend = "usd"
