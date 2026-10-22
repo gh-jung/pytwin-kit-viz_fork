@@ -101,4 +101,9 @@ works/
   | `ThermalTBROM_23R2` | ThermalROM23R1_1 / Static_Temperature (스칼라), 입력 main/side inlet temp | 139,868 | elemental | 디스크: `*_store_snapshots=1` + `initialize_evaluation` 시 `snapshot_0.bin` (정적 ROM, step으로 갱신 안 됨) | 입력 변경당 재초기화 ~550 ms |
   - 결론: 워커는 **두 가지 스냅샷 모드**를 지원 — `memory`(step마다 generate_snapshot) / `static`(입력 변경 시 재초기화 후 디스크 스냅샷 읽기)
   - ThermalTBROM은 elemental 데이터 → points는 요소 중심점
+- M1: `twin_worker/runner.py` — TwinModel 전용 스레드, 명령 큐. 로드 시 모드 자동 판별(dynamic/static).
+  `load` → `model_info` + `geometry`(ROM별 float32 N×3) + 초기 `frame`. dynamic: `start{step_size, realtime, speed}`/`pause`/`stop`(재초기화),
+  `set_inputs`는 다음 스텝에 반영. static: `set_inputs`마다 재초기화 후 프레임 1개. 프레임 필드는 float32, 헤더에 t/step/inputs/scalars.
+  서버는 신뢰 메시지 큐 + 최신 프레임 1개(latest-wins), 재접속 시 model_info/geometry 재전송. 신규 메시지 `state{running, mode}`.
+  테스트: `twin_worker/tests/test_runner.py` (models/ 파일 없으면 skip)
 - M0: kit-app-template 110.1.4에서 앱 `twinviz.app`(kit_base_editor), 확장 `twinviz.viewer`(python_ui) 생성. 워커 venv Python 3.12 + pytwin 0.13.0. 포트는 워커가 0번(자동)으로 열고 stdout `TWIN_WORKER_READY port=N`으로 Kit에 전달.

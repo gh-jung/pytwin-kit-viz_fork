@@ -39,6 +39,7 @@ MSG_MODEL_INFO = "model_info"
 MSG_GEOMETRY = "geometry"
 MSG_MESH_MAP = "mesh_map"
 MSG_FRAME = "frame"
+MSG_STATE = "state"
 MSG_ERROR = "error"
 MSG_LOG = "log"
 
