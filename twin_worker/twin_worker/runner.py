@@ -262,7 +262,7 @@ class TwinRunner:
         except Exception as exc:
             # A broken mesh should not prevent showing the point cloud.
             log.exception("mesh mapping failed")
-            self._emit({"type": P.MSG_ERROR, "message": f"mesh: {exc}"})
+            self._emit({"type": P.MSG_ERROR, "message": f"mesh: {type(exc).__name__}: {exc}"})
             return
         if arrays:
             meta, payload = P.pack_arrays(arrays)

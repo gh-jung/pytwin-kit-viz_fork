@@ -49,6 +49,7 @@ cd kit-app; .\repo.bat test
 | `scripts/inspect_twin.py` | twin 입력/출력/TBROM 정보와 스텝 시간 출력 (워커 venv) |
 | `scripts/kit_screenshot.py` | 앱을 띄워 모델 로드 → 창/뷰포트 캡처 → 종료 (`--exec`) |
 | `scripts/kit_bench.py` | 프레임 반영 성능 측정, USD vs Fabric (`--exec`) |
+| `scripts/field_check.py` | 모델별 한 줄 점검 코드 (워커 venv). 폐쇄망 절차: [docs/CLOSED_NETWORK_TEST.md](docs/CLOSED_NETWORK_TEST.md) |
 
 ## 프로토콜 변경 시
 `twin_worker/twin_worker/protocol.py`가 원본입니다. 수정 후 `scripts\sync_protocol.ps1`로 확장에 복사하세요.

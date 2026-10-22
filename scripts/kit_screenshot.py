@@ -10,6 +10,8 @@ Settings (pass as --/twinviz/shot/<key>=<value>):
     deform  deform scale for vector fields        (default 0)
     settle  seconds to let the renderer settle    (default 20)
     viewport  viewport render resolution "WxH"    (default 1280x720)
+    realtime  0 = step as fast as possible while running (default 1)
+    report  1 = also print one short "K<n> ..." result line (see REPORT_LEGEND)
     out     output PNG path                       (default _screenshots/<model>.png)
 
 Writes the whole app window to ``out`` and the viewport alone, rendered at
@@ -24,6 +26,7 @@ from pathlib import Path
 
 import carb
 import carb.settings
+import numpy as np
 import omni.kit.app
 import omni.kit.renderer_capture
 
@@ -32,6 +35,31 @@ from twinviz.viewer.extension import get_session
 from twinviz.viewer.stage_updater import ROOT_PATH
 
 REPO = Path(__file__).resolve().parents[1]
+
+REPORT_LEGEND = """Kn   model number, same order as field_check.py (sorted file names); ok | ERR <error>
+col  ok = rendered colors vary across the model, flat = one color, none = nothing applied
+disp mesh | points (what is shown)
+fps  frames/s that reached the stage while running (dynamic, run>0); '-' otherwise.
+     With realtime=1 it is capped at 1/step (20); use realtime=0 to measure throughput.
+rs   automatic worker restarts
+we   worker error log lines"""
+
+
+def report_line(session, model, run_fps):
+    names = sorted(p.name for p in (REPO / "models").glob("*.twin"))
+    n = names.index(model) + 1 if model in names else 0
+    updater = session.updater
+    if not updater.views or updater.frames_applied == 0:
+        col, disp = "none", "-"
+    else:
+        view = next(iter(updater.views.values()))
+        use_mesh = view.active_layer(updater.style["display"]) is view.mesh_layer
+        colors = updater.read_attr(view.rom, "primvars:displayColor", mesh=use_mesh)
+        col = "ok" if float(np.ptp(colors, axis=0).max()) > 0.05 else "flat"
+        disp = "mesh" if use_mesh else "points"
+    we = sum(1 for _, level, _ in session.log if level == "error")
+    fps = f"{run_fps:.0f}" if run_fps is not None else "-"
+    return f"K{n} ok col={col} disp={disp} fps={fps} rs={session.restarts} we={we}"
 
 
 def setting(key, default):
@@ -60,6 +88,8 @@ async def main():
     inputs = {k: float(v) for k, v in
               (kv.split(":") for kv in str(setting("inputs", "")).split(",") if kv)}
     settle_s = float(setting("settle", 20))
+    report = str(setting("report", "0")) not in ("0", "", "false")
+    realtime = str(setting("realtime", "1")) not in ("0", "", "false")
     vp_w, vp_h = (int(x) for x in str(setting("viewport", "1280x720")).lower().split("x"))
     run_s = float(setting("run", 0))
     deform = float(setting("deform", 0))
@@ -81,9 +111,12 @@ async def main():
                 session.last_frame["inputs"].get(k) == float(v) for k, v in inputs.items()))
         if deform:
             session.updater.restyle(deform_scale=deform)
+        run_fps = None
         if run_s and session.mode == "dynamic":
-            await session.start(step_size=0.05, realtime=True)
+            await session.start(step_size=0.05, realtime=realtime)
+            applied0 = session.updater.frames_applied
             await asyncio.sleep(run_s)
+            run_fps = (session.updater.frames_applied - applied0) / run_s
             await session.pause()
 
         # Render the viewport at a fixed resolution (the window may be tiny without a monitor)
@@ -106,9 +139,15 @@ async def main():
         carb.log_warn(f"[kit_screenshot] wrote {vp_out}")
         carb.log_warn(f"[kit_screenshot] wrote {out}")
         print(f"KIT_SCREENSHOT {out}", flush=True)
+        if report:
+            print(report_line(session, model, run_fps), flush=True)
     except Exception as exc:
         carb.log_error(f"[kit_screenshot] failed: {exc}")
         print(f"KIT_SCREENSHOT_FAILED {exc}", flush=True)
+        if report:
+            names = sorted(p.name for p in (REPO / "models").glob("*.twin"))
+            n = names.index(model) + 1 if model in names else 0
+            print(f"K{n} ERR {type(exc).__name__}: {str(exc)[:50]}", flush=True)
     finally:
         # post_quit alone has been seen to leave the process alive; hard-exit as a fallback.
         threading.Timer(30.0, lambda: os._exit(0)).start()
