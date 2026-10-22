@@ -1,0 +1,4 @@
+[basic_python_ui_extension]
+extension_name = "twinviz.viewer"
+extension_display_name = "TwinViz Viewer"
+version = "0.1.0"

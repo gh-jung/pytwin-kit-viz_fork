@@ -1,0 +1,97 @@
+# PyTwin TBROM + Omniverse Kit 가시화 확장 — 계획
+
+## 목표
+Ansys PyTwin ROM(TBROM 필드 포함)을 **별도 프로세스**에서 실행하고, 시뮬레이션 결과를
+Omniverse Kit 앱(Kit **110.1.4**)에 실시간으로 렌더링한다. 워커와 Kit은 **같은 PC**에서 동작한다.
+
+## 아키텍처
+
+```
+┌──────────────── Kit App (Kit 내장 Python) ─────────────────────┐
+│  twinviz.viewer 확장 (앱: twinviz.app)                                                │
+│   ├─ ProcessManager : 워커 실행/종료/헬스체크 (subprocess)       │
+│   ├─ TwinClient     : asyncio TCP 클라이언트 (제어 송신, 프레임 수신) │
+│   ├─ FrameBuffer    : 최신 프레임만 유지 (latest-wins)           │
+│   ├─ StageUpdater   : update 이벤트에서 USD/Fabric 반영, 컬러맵    │
+│   └─ UI (omni.ui)   : 시작/정지, 입력 슬라이더, 컬러맵 범위, 출력   │
+└───────────────▲──────────────────────────┬──────────────────────┘
+                │ 프레임(JSON 헤더 + binary)  │ 제어(JSON)
+                │ 127.0.0.1 TCP             ▼
+┌──────────────── Twin Worker (별도 venv, pytwin) ────────────────┐
+│   ├─ Server        : asyncio TCP 서버                           │
+│   ├─ TwinRunner    : TwinModel 로드 → initialize → step 루프(스레드) │
+│   └─ FieldExtractor: TBROM points / snapshot → float32 numpy     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 프로세스 분리 이유
+- Kit 내장 Python/패키지와 pytwin 의존성(numpy, pandas, Twin Runtime DLL) 충돌 회피
+- Twin Runtime의 블로킹 호출·네이티브 크래시로부터 Kit UI 보호
+
+## IPC 프로토콜
+- 전송: 127.0.0.1 TCP, asyncio 스트림 (추가 의존성 없음)
+- 프레이밍: `[u32 헤더길이][JSON 헤더][u32 payload길이][binary payload]` (little-endian)
+- `protocol.py`는 표준 라이브러리만 사용 → Kit/워커 공용
+- 메시지
+  - Kit → 워커: `ping`, `load`, `init`, `start`, `pause`, `set_inputs`, `stop`, `shutdown`
+  - 워커 → Kit: `pong`, `model_info`(입출력/TBROM 목록), `geometry`(TBROM 점 N×3, 연결 시 1회),
+    `mesh_map`(메쉬 정점→TBROM 점 인덱스, 1회), `frame`(t, step, scalars, 필드 값), `error`, `log`
+- 매 프레임은 필드 **값만** 전송 (스칼라장 N, 벡터장 N×3 float32)
+- 역압: 워커는 최신 프레임만 송신, Kit은 렌더 프레임당 최신 1개만 반영
+- 대용량(수백만 점)일 때만 `multiprocessing.shared_memory` 링버퍼로 전환 검토
+
+## 시각화
+- 컬러맵은 Kit 측 numpy에서 계산 (UI에서 범위/맵 변경 시 워커 재시작 불필요)
+- 메쉬가 **없는** TBROM: `UsdGeom.Points` 포인트 클라우드 + `primvars:displayColor`
+- 메쉬가 **있는** TBROM: 원본 메쉬(.vtk/.stl/.cdb 등) → USD 변환, 워커에서 KD-tree로
+  정점↔TBROM 점 최근접 인덱스 1회 계산 → Kit은 `values[index]`로 정점 색만 갱신
+- USD 갱신: `Sdf.ChangeBlock` + `Vt.*Array.FromNumpy`로 시작, 필요시 USDRT/Fabric
+
+## 마일스톤 (각 단계 완료 시 GitHub push)
+
+| 단계 | 내용 | 완료 기준 |
+|---|---|---|
+| **M0** | 저장소/Kit 앱 골격(kit-app-template 110), 워커 venv, 공용 프로토콜, ping/pong | 확장에서 워커 실행 → ping/pong 성공, 종료 시 워커 정리 |
+| **M1** | 워커: TBROM twin 로드 → step 루프 → `model_info`/`geometry`/`frame` 송신 | 테스트 클라이언트로 프레임 수신 확인 |
+| **M2** | Kit: 포인트 클라우드 + 컬러맵, 입력 슬라이더, 스칼라 출력 표시 | 입력 변경 시 필드 색이 실시간 변화 |
+| **M3** | 메쉬 매핑(메쉬 있는 모델): 변환 스크립트 + 인덱스 매핑 + 서피스 컨투어 | 메쉬 표면 컨투어 표시 |
+| **M4** | 성능/운영: USDRT/Fabric, 워커 자동 재시작, named selection 선택, 로그 패널 | 10만 점 이상 30fps |
+
+## 디렉터리 구조 (예정)
+```
+works/
+├─ PLAN.md
+├─ kit-app/                         # kit-app-template 기반
+│  └─ source/extensions/twinviz.viewer/
+│     ├─ config/extension.toml      # worker_root, worker_python 설정
+│     └─ twinviz/viewer/
+│        ├─ extension.py
+│        ├─ process_manager.py
+│        ├─ client.py
+│        ├─ protocol.py             # twin_worker/protocol.py와 동일
+│        ├─ stage_updater.py
+│        └─ ui/window.py
+├─ twin_worker/
+│  ├─ pyproject.toml                # pytwin, numpy, scipy
+│  └─ twin_worker/
+│     ├─ __main__.py                # --port --twin --parent-pid
+│     ├─ server.py
+│     ├─ runner.py
+│     └─ protocol.py
+├─ models/                          # .twin, 메쉬 (git 제외 또는 LFS)
+└─ scripts/
+```
+
+## 운영 규칙
+- 워커는 `--parent-pid`를 감시해 Kit 종료 시 자동 종료 (고아 프로세스 방지)
+- USD 수정은 Kit 메인 스레드(update 이벤트)에서만
+- 각 마일스톤 완료 시 커밋 후 GitHub push
+
+## 리스크 / 확인 사항
+- PyTwin 지원 Python 버전 → 워커 venv용 Python 버전 결정
+- Twin Runtime 실행 라이선스 조건
+- TBROM API(필드 출력 활성화, snapshot 반환 형태)는 설치 버전 기준으로 확인
+- kit-app-template 110 브랜치 구조 및 Kit 내장 Python 버전 확인
+
+## 진행 기록
+- M0: kit-app-template 110.1.4에서 앱 `twinviz.app`(kit_base_editor), 확장 `twinviz.viewer`(python_ui) 생성. 워커 venv Python 3.12 + pytwin 0.13.0. 포트는 워커가 0번(자동)으로 열고 stdout `TWIN_WORKER_READY port=N`으로 Kit에 전달.

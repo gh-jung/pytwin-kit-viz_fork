@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Model files (large / proprietary) — keep locally, not in git
+models/**
+!models/README.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/

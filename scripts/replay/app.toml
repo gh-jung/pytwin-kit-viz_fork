@@ -1,0 +1,4 @@
+[kit_base_editor]
+application_name = "twinviz.app"
+application_display_name = "TwinViz"
+version = "0.1.0"

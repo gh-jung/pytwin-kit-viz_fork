@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twin_worker"
+version = "0.1.0"
+description = "Out-of-process PyTwin runner streaming ROM results to Omniverse Kit"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "pytwin",
+    "numpy",
+]
+
+[project.optional-dependencies]
+mesh = ["scipy"]
+
+[tool.setuptools]
+packages = ["twin_worker"]
