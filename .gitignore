@@ -7,6 +7,7 @@ __pycache__/
 # Model files (large / proprietary) — keep locally, not in git
 models/**
 !models/README.md
+!models/*.twinviz.json
 
 # OS / editor
 .DS_Store

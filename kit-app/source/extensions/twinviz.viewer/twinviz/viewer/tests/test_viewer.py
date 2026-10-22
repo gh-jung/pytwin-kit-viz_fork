@@ -65,6 +65,7 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         return next(iter(updater.views.values()))
 
     async def test_dynamic_fea_points_and_colors(self):
+        self.session.updater.restyle(display="points")
         view = await self._load("FEADeformationTBROM_23R2.twin")
         stage = omni.usd.get_context().get_stage()
         points = UsdGeom.Points(stage.GetPrimAtPath(view.path))
@@ -86,6 +87,35 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         await omni.kit.app.get_app().next_update_async()
         moved = np.array(points.GetPointsAttr().Get())
         self.assertGreater(np.abs(moved - view.base_points).max(), 0.0)
+
+    async def test_fea_mesh_mapping(self):
+        if not (self.models / "FEA_deformation.rst").is_file():
+            self.skipTest("missing FEA_deformation.rst")
+        view = await self._load("FEADeformationTBROM_23R2.twin")
+        await wait_until(lambda: view.mesh_layer is not None)
+        stage = omni.usd.get_context().get_stage()
+        mesh = UsdGeom.Mesh(stage.GetPrimAtPath(view.mesh_path))
+        n_vertices = len(mesh.GetPointsAttr().Get())
+        self.assertEqual(len(mesh.GetFaceVertexIndicesAttr().Get()), 3 * len(mesh.GetFaceVertexCountsAttr().Get()))
+        self.assertEqual(UsdGeom.Imageable(stage.GetPrimAtPath(view.path)).ComputeVisibility(), UsdGeom.Tokens.invisible)
+        self.assertEqual(self.session.mesh_stats[view.rom]["unmapped"], 0)
+
+        self.session.set_input("Force_X_Component", 5.0)
+        await self.session.start(step_size=0.05, realtime=False)
+        await wait_until(lambda: self.session.last_frame["step"] > 5)
+        await self.session.pause()
+        n = self.session.updater.frames_applied
+        await wait_until(lambda: self.session.updater.frames_applied > n)
+        colors = colors_of(view.mesh_path)
+        self.assertEqual(len(colors), n_vertices)
+        self.assertGreater(np.ptp(colors, axis=0).max(), 0.3)  # a real gradient, not one color
+
+        # Switching to points shows the cloud and hides the mesh.
+        self.session.updater.restyle(display="points")
+        await omni.kit.app.get_app().next_update_async()
+        await omni.kit.app.get_app().next_update_async()
+        self.assertEqual(UsdGeom.Imageable(stage.GetPrimAtPath(view.mesh_path)).ComputeVisibility(),
+                         UsdGeom.Tokens.invisible)
 
     async def test_static_thermal_colors_follow_inputs(self):
         view = await self._load("ThermalTBROM_23R2.twin")

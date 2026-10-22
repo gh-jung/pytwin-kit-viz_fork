@@ -101,6 +101,13 @@ works/
   | `ThermalTBROM_23R2` | ThermalROM23R1_1 / Static_Temperature (스칼라), 입력 main/side inlet temp | 139,868 | elemental | 디스크: `*_store_snapshots=1` + `initialize_evaluation` 시 `snapshot_0.bin` (정적 ROM, step으로 갱신 안 됨) | 입력 변경당 재초기화 ~550 ms |
   - 결론: 워커는 **두 가지 스냅샷 모드**를 지원 — `memory`(step마다 generate_snapshot) / `static`(입력 변경 시 재초기화 후 디스크 스냅샷 읽기)
   - ThermalTBROM은 elemental 데이터 → points는 요소 중심점
+- M3: 메쉬 매핑. 워커 `mesh.py` — `<twin>.twinviz.json` 사이드카(또는 `load{meshes}`)로 메쉬 지정,
+  `.rst`/`.cdb`/`.dat`는 `ansys-mapdl-reader`(Ansys 설치 불필요), 그 외는 pyvista. 외곽 표면 삼각화 →
+  cKDTree로 각 정점의 최근접 TBROM 점 인덱스(허용거리 = TBROM 점 간격 중앙값×1.5, 밖이면 -1=회색).
+  `mesh_map` 메시지(ROM별 points/faces/index)를 로드 시 1회 전송, 재접속 시 재전송. Kit은 `UsdGeom.Mesh`에
+  `values[index]`로 정점 색/변형만 갱신, Show: mesh/points 전환(보이는 쪽만 갱신).
+  FEA 예제: 표면 정점 1,332 / 삼각형 2,352, 미매핑 0 (노드 좌표 일치 ~1e-11 m).
+  - 미검증: elemental TBROM(Thermal)의 메쉬 매핑 — `ThermalTBROM.dat` 필요
 - M2: Kit 측 `session.py`(워커+클라이언트+스테이지 연결, 입력 스로틀: static은 프레임 도착까지 대기, dynamic은 50 ms),
   `stage_updater.py`(`GLOBAL_EVENT_UPDATE`에서 최신 프레임만 반영, ROM별 `UsdGeom.Points` + `primvars:displayColor`,
   벡터장은 크기로 색칠 + 변형 배율), `colormap.py`(turbo/viridis/coolwarm/jet), `window.py`(Property 패널 옆 도킹:

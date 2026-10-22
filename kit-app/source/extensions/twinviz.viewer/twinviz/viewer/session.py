@@ -22,6 +22,7 @@ class TwinSession:
         self.updater = StageUpdater(units_in_meters)
 
         self.model_info = None
+        self.mesh_stats = {}
         self.running = False
         self.last_frame = None
         self.last_error = ""
@@ -38,6 +39,7 @@ class TwinSession:
         c = self.client
         c.on(P.MSG_MODEL_INFO, self._on_model_info)
         c.on(P.MSG_GEOMETRY, self._on_geometry)
+        c.on(P.MSG_MESH_MAP, self._on_mesh_map)
         c.on(P.MSG_FRAME, self._on_frame)
         c.on(P.MSG_STATE, self._on_state)
         c.on(P.MSG_ERROR, self._on_error)
@@ -81,12 +83,17 @@ class TwinSession:
 
     # ---- commands -------------------------------------------------------------
 
-    async def load(self, path):
+    async def load(self, path, meshes=None):
+        """Load a twin; ``meshes`` ({rom or "*": path}) overrides the model's sidecar file."""
         await self.start_worker()
         self.model_info = None
+        self.mesh_stats = {}
         self.last_frame = None
         self.updater.clear()
-        await self.client.send({"type": P.MSG_LOAD, "path": str(path)})
+        msg = {"type": P.MSG_LOAD, "path": str(path)}
+        if meshes:
+            msg["meshes"] = {k: str(v) for k, v in meshes.items()}
+        await self.client.send(msg)
 
     async def start(self, step_size, realtime=True, speed=1.0):
         await self.client.send({
@@ -129,6 +136,11 @@ class TwinSession:
 
     def _on_geometry(self, header, payload):
         self.updater.set_geometry(P.unpack_arrays(header["arrays"], payload, np))
+
+    def _on_mesh_map(self, header, payload):
+        self.mesh_stats = header.get("stats", {})
+        self.updater.set_meshes(P.unpack_arrays(header["arrays"], payload, np))
+        self._notify("mesh")
 
     def _on_frame(self, header, payload):
         arrays = P.unpack_arrays(header["arrays"], payload, np)

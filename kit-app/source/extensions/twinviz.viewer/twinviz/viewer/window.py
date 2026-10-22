@@ -8,6 +8,7 @@ import carb
 import omni.ui as ui
 
 from . import colormap
+from .stage_updater import DISPLAY_MESH, DISPLAY_POINTS
 
 WINDOW_TITLE = "TwinViz Viewer"
 LABEL_W = 110
@@ -125,6 +126,12 @@ class TwinVizWindow:
         with ui.CollapsableFrame("Display"):
             with ui.VStack(spacing=4, height=0):
                 with ui.HStack(height=22):
+                    ui.Label("Show", width=LABEL_W, tooltip="Mesh needs a <model>.twinviz.json sidecar")
+                    displays = [DISPLAY_MESH, DISPLAY_POINTS]
+                    show = ui.ComboBox(displays.index(style["display"]), *displays)
+                    show.model.get_item_value_model().add_value_changed_fn(
+                        lambda m: self._restyle(display=displays[m.as_int]))
+                with ui.HStack(height=22):
                     ui.Label("Colormap", width=LABEL_W)
                     combo = ui.ComboBox(colormap.NAMES.index(style["colormap"]), *colormap.NAMES)
                     combo.model.get_item_value_model().add_value_changed_fn(
@@ -205,6 +212,10 @@ class TwinVizWindow:
             self._model_label.text = f"{info['name']}  mode={info['mode']}  TBROM: {npts}"
             self._inputs_frame.rebuild()
             self._outputs_frame.rebuild()
+        elif what == "mesh":
+            for rom, st in self._session.mesh_stats.items():
+                self._model_label.text += (f"\nmesh {Path(st['path']).name}: {st['triangles']} tris, "
+                                           f"{st['unmapped']} unmapped vertices")
         elif what == "error":
             self._error_label.text = self._session.last_error
         elif what == "frame":

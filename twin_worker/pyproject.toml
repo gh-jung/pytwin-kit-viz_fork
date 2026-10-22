@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mesh = ["scipy"]
+mesh = ["scipy", "ansys-mapdl-reader"]  # .rst/.cdb readers without an Ansys install
 
 [tool.setuptools]
 packages = ["twin_worker"]

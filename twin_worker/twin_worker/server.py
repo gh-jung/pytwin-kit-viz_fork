@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 # Commands forwarded to the runner thread.
 RUNNER_COMMANDS = {P.MSG_LOAD, P.MSG_INIT, P.MSG_START, P.MSG_PAUSE, P.MSG_SET_INPUTS, P.MSG_STOP}
 # Messages replayed to a client that connects after a model was loaded.
-REPLAYED = (P.MSG_MODEL_INFO, P.MSG_GEOMETRY)
+REPLAYED = (P.MSG_MODEL_INFO, P.MSG_GEOMETRY, P.MSG_MESH_MAP)
 
 
 class WorkerServer:

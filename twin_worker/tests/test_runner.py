@@ -16,6 +16,7 @@ from test_ping import launch_worker
 MODELS = Path(__file__).resolve().parents[2] / "models"
 FEA = MODELS / "FEADeformationTBROM_23R2.twin"
 THERMAL = MODELS / "ThermalTBROM_23R2.twin"
+FEA_MESH = MODELS / "FEA_deformation.rst"
 
 
 class Session:
@@ -112,6 +113,26 @@ class RunnerTest(unittest.TestCase):
             self.assertAlmostEqual(float(temp.min()), 280.0, delta=1.0)
             self.assertAlmostEqual(float(temp.max()), 400.0, delta=1.0)
             self.assertAlmostEqual(frame["scalars"]["MaxTemp"], float(temp.max()), delta=1.0)
+
+        self.run_session(scenario)
+
+    @unittest.skipUnless(FEA.is_file() and FEA_MESH.is_file(), "missing FEA twin or mesh")
+    def test_mesh_mapping_fea(self):
+        async def scenario(s):
+            await s.send(type=P.MSG_LOAD, path=str(FEA), meshes={"*": str(FEA_MESH)})
+            info, _ = await s.expect(P.MSG_MODEL_INFO)
+            rom = info["tbroms"][0]["name"]
+            _, geom = await s.expect(P.MSG_GEOMETRY)
+            header, mesh = await s.expect(P.MSG_MESH_MAP)
+            points, faces, index = mesh[f"{rom}/points"], mesh[f"{rom}/faces"], mesh[f"{rom}/index"]
+            self.assertEqual(points.shape[1], 3)
+            self.assertEqual(faces.shape[1], 3)
+            self.assertEqual(len(index), len(points))
+            self.assertLess(faces.max(), len(points))
+            self.assertEqual(header["stats"][rom]["unmapped"], 0)
+            # Nodal TBROM on its own mesh: every vertex maps onto a coincident point.
+            np.testing.assert_allclose(geom[rom][index], points, atol=1e-6)
+            await s.expect(P.MSG_FRAME)
 
         self.run_session(scenario)
 
