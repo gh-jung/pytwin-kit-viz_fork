@@ -14,3 +14,5 @@ TBROM 필드를 점 대신 메쉬 표면에 그리려면 twin 옆에 `<twin 이�
 ```
 경로는 json 파일 기준 상대 경로. 지원 형식: MAPDL `.rst`, `.cdb`/`.dat`, 그리고 pyvista가 읽는 형식(`.vtk`, `.vtu`, `.stl`, `.obj`, `.ply` 등).
 메쉬 좌표 단위는 TBROM 점과 같아야 합니다 (최근접 점으로 매핑).
+매핑 허용거리는 TBROM 점 간격 중앙값의 배수(nodal 1.5, elemental 4.0)이며 범위 밖 정점은 회색입니다.
+값이 회색으로 너무 많이 빠지면 `"tolerance_factor": 6` 처럼 늘립니다.

@@ -17,6 +17,7 @@ MODELS = Path(__file__).resolve().parents[2] / "models"
 FEA = MODELS / "FEADeformationTBROM_23R2.twin"
 THERMAL = MODELS / "ThermalTBROM_23R2.twin"
 FEA_MESH = MODELS / "FEA_deformation.rst"
+THERMAL_MESH = MODELS / "ThermalTBROM.dat"
 
 
 class Session:
@@ -132,6 +133,22 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(header["stats"][rom]["unmapped"], 0)
             # Nodal TBROM on its own mesh: every vertex maps onto a coincident point.
             np.testing.assert_allclose(geom[rom][index], points, atol=1e-6)
+            await s.expect(P.MSG_FRAME)
+
+        self.run_session(scenario)
+
+    @unittest.skipUnless(THERMAL.is_file() and THERMAL_MESH.is_file(), "missing thermal twin or mesh")
+    def test_mesh_mapping_thermal_elemental(self):
+        async def scenario(s):
+            await s.send(type=P.MSG_LOAD, path=str(THERMAL), meshes={"*": str(THERMAL_MESH)})
+            info, _ = await s.expect(P.MSG_MODEL_INFO)
+            rom = info["tbroms"][0]["name"]
+            self.assertEqual(info["tbroms"][0]["location"].lower(), "elemental")
+            header, mesh = await s.expect(P.MSG_MESH_MAP)
+            st = header["stats"][rom]
+            # Element centroids lie inside the surface; most vertices must still map.
+            self.assertGreater(st["triangles"], 5000)
+            self.assertLess(st["unmapped"] / st["vertices"], 0.15)
             await s.expect(P.MSG_FRAME)
 
         self.run_session(scenario)

@@ -107,7 +107,10 @@ works/
   `mesh_map` 메시지(ROM별 points/faces/index)를 로드 시 1회 전송, 재접속 시 재전송. Kit은 `UsdGeom.Mesh`에
   `values[index]`로 정점 색/변형만 갱신, Show: mesh/points 전환(보이는 쪽만 갱신).
   FEA 예제: 표면 정점 1,332 / 삼각형 2,352, 미매핑 0 (노드 좌표 일치 ~1e-11 m).
-  - 미검증: elemental TBROM(Thermal)의 메쉬 매핑 — `ThermalTBROM.dat` 필요
+  - elemental 검증(Thermal + `ThermalTBROM.dat`): `ansys-mapdl-reader` Archive가 첫 EBLOCK만 읽음(231개 중 1개)
+    → 자체 `.cdb/.dat` 파서(`cdb.py`: 모든 NBLOCK/EBLOCK, 솔리드 요소만, 퇴화 hex→tet/wedge/pyramid).
+    솔리드 14,454요소 → 표면 4,548정점/9,088삼각형. 허용거리 배수: nodal 1.5 / elemental 4.0(사이드카 `tolerance_factor`로 조정).
+    본체 100% 매핑, 볼트 등 ROM 범위 밖 부품은 회색(미매핑 490정점, 10.8%).
 - 렌더링 보정: 컬러맵을 sRGB→linear로 변환해 `displayColor`에 기록(이전엔 sRGB 값을 linear로 해석해 색이 옅었음).
   `UsdPreviewSurface` 머티리얼(diffuse=`displayColor`, emissive=`fieldEmission`=색×0.6)로 조명과 무관하게 값 판독 가능.
   MAPDL 표면 면 방향이 전부 안쪽이었음 → `compute_normals(auto_orient_normals)`로 바깥쪽 정렬.

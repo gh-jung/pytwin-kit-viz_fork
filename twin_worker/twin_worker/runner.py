@@ -107,7 +107,7 @@ class TwinRunner:
     def _handle(self, cmd):
         t = cmd["type"]
         if t == P.MSG_LOAD:
-            self._load(cmd["path"], cmd.get("meshes"))
+            self._load(cmd["path"], cmd.get("meshes"), cmd.get("tolerance_factor"))
         elif self._tm is None:
             raise RuntimeError("no model loaded")
         elif t == P.MSG_INIT:
@@ -141,7 +141,7 @@ class TwinRunner:
 
     # ---- model lifecycle -----------------------------------------------------
 
-    def _load(self, path, meshes=None):
+    def _load(self, path, meshes=None, tolerance_factor=None):
         from pytwin import TwinModel  # heavy import, only on the runner thread
 
         path = Path(path)
@@ -168,7 +168,7 @@ class TwinRunner:
 
         self._emit(self._model_info(path))
         points = self._emit_geometry()
-        self._emit_meshes(path, meshes, points)
+        self._emit_meshes(path, meshes, tolerance_factor, points)
         self._initialize()
 
     def _has_output_modes(self, rom):
@@ -248,14 +248,17 @@ class TwinRunner:
         self._emit({"type": P.MSG_GEOMETRY, "arrays": meta}, payload)
         return arrays
 
-    def _emit_meshes(self, twin_path, meshes, points):
+    def _emit_meshes(self, twin_path, meshes, tolerance_factor, points):
         """Send surface meshes mapped onto TBROM points, from ``meshes`` or the sidecar file."""
-        mesh_paths = read_sidecar(twin_path)
+        mesh_paths, sidecar_factor = read_sidecar(twin_path)
         mesh_paths.update(meshes or {})
         if not mesh_paths:
             return
+        if tolerance_factor is None:
+            tolerance_factor = sidecar_factor
+        locations = {rom: self._tm.get_tbrom_data_location(rom) for rom in self._tm.tbrom_names}
         try:
-            arrays, stats = build_meshes(mesh_paths, points)
+            arrays, stats = build_meshes(mesh_paths, points, locations, tolerance_factor)
         except Exception as exc:
             # A broken mesh should not prevent showing the point cloud.
             log.exception("mesh mapping failed")
