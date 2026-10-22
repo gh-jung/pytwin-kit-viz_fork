@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 
 import carb
+import carb.eventdispatcher
+import omni.kit.app
 import omni.ui as ui
 
 from . import colormap
@@ -39,9 +41,17 @@ class TwinVizWindow:
                     self._inputs_frame = ui.CollapsableFrame("Inputs", build_fn=self._build_inputs)
                     self._outputs_frame = ui.CollapsableFrame("Outputs", build_fn=self._build_outputs)
                     self._build_display_section()
+                    self._build_log_section()
         self._refresh_models()
+        self._log_version = -1
+        self._log_sub = carb.eventdispatcher.get_eventdispatcher().observe_event(
+            event_name=omni.kit.app.GLOBAL_EVENT_UPDATE,
+            observer_name="twinviz.viewer.LogPanel",
+            on_event=lambda _: self._refresh_log(),
+        )
 
     def destroy(self):
+        self._log_sub = None
         self._session.on_changed = None
         self._session.updater.on_geometry_built = None
         if self._window:
@@ -99,6 +109,8 @@ class TwinVizWindow:
             if not info or not info["inputs"]:
                 ui.Label("no inputs")
                 return
+            if info["mode"] == "dynamic":
+                ui.Label("Applied on the next time step (press Start).", style={"color": 0xFF999999})
             frame = self._session.last_frame
             current = frame["inputs"] if frame else info["inputs"]
             for name, default in info["inputs"].items():
@@ -152,6 +164,21 @@ class TwinVizWindow:
                     deform = ui.FloatDrag(min=0.0, step=1.0)
                     deform.model.add_value_changed_fn(lambda m: self._restyle(deform_scale=m.as_float))
                 self._range_label = ui.Label("", word_wrap=True)
+
+    def _build_log_section(self):
+        with ui.CollapsableFrame("Worker log", collapsed=True):
+            with ui.ScrollingFrame(height=160):
+                self._log_label = ui.Label("", word_wrap=True, alignment=ui.Alignment.LEFT_TOP,
+                                           style={"font_size": 12})
+
+    def _refresh_log(self):
+        worker = self._session.worker
+        if worker.log_version == self._log_version:
+            return
+        self._log_version = worker.log_version
+        marks = {"error": "E", "warning": "W", "info": " "}
+        lines = [f"{ts} {marks.get(level, ' ')} {text}" for ts, level, text in list(worker.log)[-60:]]
+        self._log_label.text = "\n".join(lines)
 
     # ---- actions ----------------------------------------------------------------
 

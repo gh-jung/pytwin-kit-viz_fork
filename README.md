@@ -33,5 +33,22 @@ cd twin_worker; .\.venv\Scripts\python -m unittest discover -s tests -v
 cd kit-app; .\repo.bat test
 ```
 
+## 확장 설정 (`kit-app/source/extensions/twinviz.viewer/config/extension.toml`)
+| 키 | 기본값 | 내용 |
+|---|---|---|
+| `worker_root` / `worker_python` | 빈 값 = `twin_worker/`와 그 `.venv` | 워커 위치 |
+| `models_dir` | 빈 값 = `models/` | Load 목록에 보이는 `.twin` 폴더 |
+| `model_units_in_meters` | `1.0` | TBROM 좌표 단위 |
+| `write_backend` | `fabric` | 프레임 기록 경로 (`fabric` = USDRT, `usd`) |
+
+메쉬 표시는 [models/README.md](models/README.md)의 사이드카 파일 참고.
+
+## 도구 스크립트
+| 스크립트 | 용도 |
+|---|---|
+| `scripts/inspect_twin.py` | twin 입력/출력/TBROM 정보와 스텝 시간 출력 (워커 venv) |
+| `scripts/kit_screenshot.py` | 앱을 띄워 모델 로드 → 창/뷰포트 캡처 → 종료 (`--exec`) |
+| `scripts/kit_bench.py` | 프레임 반영 성능 측정, USD vs Fabric (`--exec`) |
+
 ## 프로토콜 변경 시
 `twin_worker/twin_worker/protocol.py`가 원본입니다. 수정 후 `scripts\sync_protocol.ps1`로 확장에 복사하세요.

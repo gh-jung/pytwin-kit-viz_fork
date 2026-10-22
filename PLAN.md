@@ -94,6 +94,23 @@ works/
 - kit-app-template 110 브랜치 구조 및 Kit 내장 Python 버전 확인
 
 ## 진행 기록
+- M4: 성능/운영.
+  - 프레임 반영을 준비(백그라운드 스레드: 컬러맵·변형, numpy)와 커밋(메인 스레드)으로 분리, 커밋은 USDRT로
+    Fabric에 직접 기록(`write_backend = "fabric"`, `"usd"`로 전환 가능; USD 레이어에는 초기값만 남음).
+  - `scripts/kit_bench.py` 결과(합성 데이터, 매 틱 새 프레임, RTX 3060):
+    | 점 수 | 표현/필드 | USD | Fabric |
+    |---:|---|---:|---:|
+    | 140k | points/vector | 92 fps | 118 fps |
+    | 500k | points/vector | 23 fps | 62 fps |
+    | 1M | points/vector | 12.6 fps | 32.5 fps |
+    | 1M | mesh/scalar | 27 fps | 60 fps |
+    → 목표(10만 점 이상 30 fps) 충족, 100만 점 벡터장도 30 fps 이상. 메인 스레드 틱은 Fabric에서 8.5~31 ms.
+  - 스타일 변경은 버전으로 추적(이전 스타일로 준비 중이던 프레임과 구분), `StageUpdater.settled`.
+  - 워커 크래시 자동 복구: 비정상 연결 종료 시 재시작(최대 3회, 백오프 1s→2s→4s) 후 모델·입력·실행 상태 복원.
+  - Worker log 패널(워커 stdout/stderr 최근 200줄, 종료 코드 포함).
+  - dynamic 모델 일시정지 중 입력은 다음 스텝에 반영 → UI 안내 문구.
+  - 보류: named selection 선택 — 두 예제 모두 named selection이 전체 점과 동일해 검증 불가. 부분 선택이 있는
+    모델이 생기면 `generate_points/generate_snapshot(named_selection=...)`(static은 전체 스냅샷에서 인덱스 추출)로 구현.
 - 예제 모델 조사 (`scripts/inspect_twin.py`, `pytwin[graphics]` 필요 — TBROM points 읽기에 pyvista 사용)
   | 모델 | TBROM / 필드 | 점 수 | 위치 | 스냅샷 방식 | 비용 |
   |---|---|---:|---|---|---|

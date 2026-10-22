@@ -1,9 +1,11 @@
 """Launches and supervises the out-of-process twin worker."""
 
+import collections
 import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import carb
@@ -11,6 +13,7 @@ import carb
 from . import protocol as P
 
 READY_TIMEOUT_S = 30.0
+LOG_LINES = 200
 
 
 class WorkerProcess:
@@ -22,6 +25,17 @@ class WorkerProcess:
         self.port = None
         self._proc = None
         self._ready = threading.Event()
+        # (timestamp, level, text); appended from reader threads, read on the main thread.
+        self.log = collections.deque(maxlen=LOG_LINES)
+        self.log_version = 0
+
+    def _log(self, level, text):
+        self.log.append((time.strftime("%H:%M:%S"), level, text))
+        self.log_version += 1
+
+    @property
+    def returncode(self):
+        return None if self._proc is None else self._proc.poll()
 
     @property
     def running(self):
@@ -85,14 +99,22 @@ class WorkerProcess:
                 self._ready.set()
             elif line:
                 carb.log_info(f"[twin_worker] {line}")
+                self._log("info", line)
         self._ready.set()  # unblock waiters if the process died early
+        code = proc.wait()
+        self._log("info" if code == 0 else "error", f"worker exited with code {code}")
 
     def _read_stderr(self, proc):
         for line in proc.stderr:
             line = line.rstrip()
-            if " ERROR " in line:
+            if not line:
+                continue
+            if " ERROR " in line or line.startswith("Traceback"):
                 carb.log_error(line)
+                self._log("error", line)
             elif " WARNING " in line:
                 carb.log_warn(line)
-            elif line:
+                self._log("warning", line)
+            else:
                 carb.log_info(line)
+                self._log("info", line)

@@ -126,6 +126,22 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         self.assertEqual(UsdGeom.Imageable(stage.GetPrimAtPath(view.mesh_path)).ComputeVisibility(),
                          UsdGeom.Tokens.invisible)
 
+    async def test_worker_crash_recovery(self):
+        await self._load("FEADeformationTBROM_23R2.twin")
+        self.session.set_input("Force_X_Component", 3.0)
+        await self.session.start(step_size=0.05, realtime=False)
+        await wait_until(lambda: self.session.last_frame["step"] > 3)
+        old_pid = self.session.client.hello["pid"]
+
+        self.session.worker._proc.kill()  # simulate a crash
+        await wait_until(lambda: self.session.restarts == 1 and self.session.connected
+                         and self.session.client.hello["pid"] != old_pid)
+        # Model, inputs and run state come back; frames keep flowing from the new worker.
+        await wait_until(lambda: self.session.running and self.session.last_frame["step"] > 3
+                         and self.session.last_frame["inputs"]["Force_X_Component"] == 3.0)
+        self.assertFalse(self.session.recovering)
+        self.assertTrue(any("exited with code" in text for _, _, text in self.session.log))
+
     async def test_static_thermal_colors_follow_inputs(self):
         view = await self._load("ThermalTBROM_23R2.twin")
         self.assertEqual(self.session.mode, "static")
