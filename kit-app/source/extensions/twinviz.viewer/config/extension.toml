@@ -22,12 +22,19 @@ readme  = "docs/README.md"  # Path (relative to the root) or content of readme m
 
 [dependencies]
 "omni.kit.uiapp" = {}
+"omni.kit.pip_archive" = {}  # numpy
+"omni.usd" = {}
+"omni.kit.viewport.utility" = {}
 
 
 [settings]
 # Empty = <repo>/twin_worker and its .venv python.
 exts."twinviz.viewer".worker_root = ""
 exts."twinviz.viewer".worker_python = ""
+# Empty = <repo>/models
+exts."twinviz.viewer".models_dir = ""
+# Length unit of TBROM point coordinates (Ansys results are SI).
+exts."twinviz.viewer".model_units_in_meters = 1.0
 
 
 [[python.module]]  # Main python module this extension provides, it will be publicly available as "import twinviz.viewer"

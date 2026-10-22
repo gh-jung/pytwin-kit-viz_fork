@@ -101,6 +101,12 @@ works/
   | `ThermalTBROM_23R2` | ThermalROM23R1_1 / Static_Temperature (스칼라), 입력 main/side inlet temp | 139,868 | elemental | 디스크: `*_store_snapshots=1` + `initialize_evaluation` 시 `snapshot_0.bin` (정적 ROM, step으로 갱신 안 됨) | 입력 변경당 재초기화 ~550 ms |
   - 결론: 워커는 **두 가지 스냅샷 모드**를 지원 — `memory`(step마다 generate_snapshot) / `static`(입력 변경 시 재초기화 후 디스크 스냅샷 읽기)
   - ThermalTBROM은 elemental 데이터 → points는 요소 중심점
+- M2: Kit 측 `session.py`(워커+클라이언트+스테이지 연결, 입력 스로틀: static은 프레임 도착까지 대기, dynamic은 50 ms),
+  `stage_updater.py`(`GLOBAL_EVENT_UPDATE`에서 최신 프레임만 반영, ROM별 `UsdGeom.Points` + `primvars:displayColor`,
+  벡터장은 크기로 색칠 + 변형 배율), `colormap.py`(turbo/viridis/coolwarm/jet), `window.py`(Property 패널 옆 도킹:
+  워커/모델 로드/실행/입력/출력/표시 설정). 단위는 SI→스테이지 metersPerUnit 변환.
+  화면 확인: `scripts/kit_screenshot.py` (`--exec`로 실행, 결과 `_screenshots/`, git 제외).
+  - 남은 개선(M4): 조명 때문에 색이 옅게 보임 → unlit/emissive 머티리얼 검토, 일시정지 중 dynamic 입력 변경 시 미리보기 없음
 - M1: `twin_worker/runner.py` — TwinModel 전용 스레드, 명령 큐. 로드 시 모드 자동 판별(dynamic/static).
   `load` → `model_info` + `geometry`(ROM별 float32 N×3) + 초기 `frame`. dynamic: `start{step_size, realtime, speed}`/`pause`/`stop`(재초기화),
   `set_inputs`는 다음 스텝에 반영. static: `set_inputs`마다 재초기화 후 프레임 1개. 프레임 필드는 float32, 헤더에 t/step/inputs/scalars.

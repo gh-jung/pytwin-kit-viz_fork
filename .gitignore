@@ -12,3 +12,4 @@ models/**
 .DS_Store
 Thumbs.db
 .idea/
+_screenshots/
