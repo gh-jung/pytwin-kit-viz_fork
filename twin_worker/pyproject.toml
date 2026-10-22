@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Out-of-process PyTwin runner streaming ROM results to Omniverse Kit"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "pytwin",
+    "pytwin[graphics]",  # TBROM point files are read through pyvista
     "numpy",
 ]
 

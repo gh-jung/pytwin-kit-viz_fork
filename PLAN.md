@@ -94,4 +94,11 @@ works/
 - kit-app-template 110 브랜치 구조 및 Kit 내장 Python 버전 확인
 
 ## 진행 기록
+- 예제 모델 조사 (`scripts/inspect_twin.py`, `pytwin[graphics]` 필요 — TBROM points 읽기에 pyvista 사용)
+  | 모델 | TBROM / 필드 | 점 수 | 위치 | 스냅샷 방식 | 비용 |
+  |---|---|---:|---|---|---|
+  | `FEADeformationTBROM_23R2` | DeformationROM1 / Deformation (벡터 N×3), 입력 `Force_X_Component` | 1,332 | Nodal | 메모리 `generate_snapshot` (모드 계수가 twin 출력) | step 1 ms, snapshot 0.03 ms |
+  | `ThermalTBROM_23R2` | ThermalROM23R1_1 / Static_Temperature (스칼라), 입력 main/side inlet temp | 139,868 | elemental | 디스크: `*_store_snapshots=1` + `initialize_evaluation` 시 `snapshot_0.bin` (정적 ROM, step으로 갱신 안 됨) | 입력 변경당 재초기화 ~550 ms |
+  - 결론: 워커는 **두 가지 스냅샷 모드**를 지원 — `memory`(step마다 generate_snapshot) / `static`(입력 변경 시 재초기화 후 디스크 스냅샷 읽기)
+  - ThermalTBROM은 elemental 데이터 → points는 요소 중심점
 - M0: kit-app-template 110.1.4에서 앱 `twinviz.app`(kit_base_editor), 확장 `twinviz.viewer`(python_ui) 생성. 워커 venv Python 3.12 + pytwin 0.13.0. 포트는 워커가 0번(자동)으로 열고 stdout `TWIN_WORKER_READY port=N`으로 Kit에 전달.
