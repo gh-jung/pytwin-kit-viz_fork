@@ -9,7 +9,11 @@ Settings (pass as --/twinviz/shot/<key>=<value>):
     run     seconds to run a dynamic model        (default 0)
     deform  deform scale for vector fields        (default 0)
     settle  seconds to let the renderer settle    (default 20)
+    viewport  viewport render resolution "WxH"    (default 1280x720)
     out     output PNG path                       (default _screenshots/<model>.png)
+
+Writes the whole app window to ``out`` and the viewport alone, rendered at
+``viewport`` resolution independent of the window size, to ``<out>_viewport.png``.
 """
 
 import asyncio
@@ -23,7 +27,9 @@ import carb.settings
 import omni.kit.app
 import omni.kit.renderer_capture
 
+from omni.kit.viewport.utility import capture_viewport_to_file, frame_viewport_prims, get_active_viewport
 from twinviz.viewer.extension import get_session
+from twinviz.viewer.stage_updater import ROOT_PATH
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -54,6 +60,7 @@ async def main():
     inputs = {k: float(v) for k, v in
               (kv.split(":") for kv in str(setting("inputs", "")).split(",") if kv)}
     settle_s = float(setting("settle", 20))
+    vp_w, vp_h = (int(x) for x in str(setting("viewport", "1280x720")).lower().split("x"))
     run_s = float(setting("run", 0))
     deform = float(setting("deform", 0))
     out = Path(setting("out", str(REPO / "_screenshots" / (Path(model).stem + ".png"))))
@@ -79,6 +86,13 @@ async def main():
             await asyncio.sleep(run_s)
             await session.pause()
 
+        # Render the viewport at a fixed resolution (the window may be tiny without a monitor)
+        # and frame the whole model, including a mesh that arrived after the points.
+        viewport = get_active_viewport()
+        viewport.resolution = (vp_w, vp_h)
+        await frames(5)
+        frame_viewport_prims(viewport, prims=[ROOT_PATH])
+
         # Wait for RTX to finish loading (first launch compiles shaders) and converge.
         t0 = time.perf_counter()
         while time.perf_counter() - t0 < settle_s:
@@ -87,6 +101,9 @@ async def main():
         capture.capture_next_frame_swapchain(str(out))
         await frames(10)
         capture.wait_async_capture()
+        vp_out = out.with_name(out.stem + "_viewport.png")
+        await capture_viewport_to_file(viewport, str(vp_out)).wait_for_result()
+        carb.log_warn(f"[kit_screenshot] wrote {vp_out}")
         carb.log_warn(f"[kit_screenshot] wrote {out}")
         print(f"KIT_SCREENSHOT {out}", flush=True)
     except Exception as exc:

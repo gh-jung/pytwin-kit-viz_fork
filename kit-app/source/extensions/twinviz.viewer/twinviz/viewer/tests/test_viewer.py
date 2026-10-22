@@ -33,10 +33,16 @@ def colors_of(path):
 
 class TestColormap(omni.kit.test.AsyncTestCase):
     async def test_range_ends(self):
-        rgb = colormap.apply(np.array([0.0, 1.0, np.nan], np.float32), 0.0, 1.0, "viridis")
+        rgb = colormap.apply(np.array([0.0, 1.0, np.nan], np.float32), 0.0, 1.0, "viridis", linear=False)
         self.assertEqual(rgb.shape, (3, 3))
         np.testing.assert_allclose(rgb[0], [0.267, 0.005, 0.329], atol=1e-3)
         np.testing.assert_allclose(rgb[1], [0.993, 0.906, 0.144], atol=1e-3)
+
+    async def test_linear_output(self):
+        srgb = colormap.apply(np.array([0.5], np.float32), 0.0, 1.0, "turbo", linear=False)
+        lin = colormap.apply(np.array([0.5], np.float32), 0.0, 1.0, "turbo")
+        np.testing.assert_allclose(lin, colormap.srgb_to_linear(srgb), rtol=1e-5)
+        self.assertTrue((lin <= srgb + 1e-6).all())
 
     async def test_vector_magnitude(self):
         mags = colormap.scalarize(np.array([[3, 4, 0], [0, 0, 1]], np.float32))

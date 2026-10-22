@@ -61,6 +61,9 @@ def surface_mapping(mesh, tbrom_points):
     from scipy.spatial import cKDTree
 
     surf = mesh.extract_surface(algorithm="dataset_surface").triangulate()
+    # Solver meshes don't guarantee outward winding; inward faces render dark in RTX.
+    surf = surf.compute_normals(cell_normals=False, point_normals=True, split_vertices=False,
+                                consistent_normals=True, auto_orient_normals=True)
     points = np.asarray(surf.points, dtype=np.float32)
     faces = np.asarray(surf.faces).reshape(-1, 4)[:, 1:].astype(np.int32)
 

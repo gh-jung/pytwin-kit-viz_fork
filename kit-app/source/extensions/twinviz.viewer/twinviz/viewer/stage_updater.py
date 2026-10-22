@@ -7,12 +7,17 @@ import carb.eventdispatcher
 import numpy as np
 import omni.kit.app
 import omni.usd
-from pxr import Gf, Sdf, UsdGeom, Vt
+from pxr import Gf, Sdf, UsdGeom, UsdShade, Vt
 
 from . import colormap
 
 ROOT_PATH = "/World/TwinViz"
-UNMAPPED_COLOR = np.array([0.35, 0.35, 0.35], dtype=np.float32)
+MATERIAL_PATH = f"{ROOT_PATH}/Looks/FieldColor"
+UNMAPPED_COLOR = np.array([0.1, 0.1, 0.1], dtype=np.float32)  # linear
+# Share of the field color emitted rather than lit: enough to read values on the
+# unlit side of the model, low enough to keep the diffuse shading as a shape cue.
+EMISSION_GAIN = 0.6
+EMISSION_PRIMVAR = "fieldEmission"
 
 DISPLAY_POINTS = "points"
 DISPLAY_MESH = "mesh"
@@ -21,6 +26,36 @@ DISPLAY_MESH = "mesh"
 def _prim_name(name):
     name = re.sub(r"[^A-Za-z0-9_]", "_", name)
     return name if name[:1].isalpha() or name[:1] == "_" else f"_{name}"
+
+
+def _define_field_material(stage):
+    """UsdPreviewSurface: diffuse from ``displayColor``, emission from a scaled copy.
+
+    Lighting alone shades the colormap (dark sides, washed-out tops), so values can't
+    be read off the colors; the emission term keeps them readable everywhere.
+    """
+    material = UsdShade.Material.Define(stage, MATERIAL_PATH)
+
+    def primvar_reader(name, varname):
+        reader = UsdShade.Shader.Define(stage, f"{MATERIAL_PATH}/{name}")
+        reader.CreateIdAttr("UsdPrimvarReader_float3")
+        reader.CreateInput("varname", Sdf.ValueTypeNames.Token).Set(varname)
+        return reader.CreateOutput("result", Sdf.ValueTypeNames.Float3)
+
+    surface = UsdShade.Shader.Define(stage, f"{MATERIAL_PATH}/Surface")
+    surface.CreateIdAttr("UsdPreviewSurface")
+    surface.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
+        primvar_reader("DisplayColor", "displayColor"))
+    surface.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
+        primvar_reader("Emission", EMISSION_PRIMVAR))
+    surface.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.9)
+    surface.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
+    material.CreateSurfaceOutput().ConnectToSource(surface.ConnectableAPI(), "surface")
+    return material
+
+
+def _bind(prim, material):
+    UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
 
 
 def _extent(points):
@@ -42,6 +77,9 @@ class _Layer:
         self._points_attr = geom.GetPointsAttr()
         self._color_attr = geom.CreateDisplayColorPrimvar(UsdGeom.Tokens.vertex).GetAttr()
         self._color_attr.Set(Vt.Vec3fArray.FromNumpy(np.full_like(self.base_points, 0.5)))
+        self._emission_attr = UsdGeom.PrimvarsAPI(geom).CreatePrimvar(
+            EMISSION_PRIMVAR, Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.vertex).GetAttr()
+        self._emission_attr.Set(Vt.Vec3fArray.FromNumpy(np.zeros_like(self.base_points)))
         self._deformed = False
         if index is not None:
             self._valid = index >= 0
@@ -60,6 +98,7 @@ class _Layer:
             colors[~self._valid] = UNMAPPED_COLOR
         with Sdf.ChangeBlock():
             self._color_attr.Set(Vt.Vec3fArray.FromNumpy(colors))
+            self._emission_attr.Set(Vt.Vec3fArray.FromNumpy(colors * np.float32(EMISSION_GAIN)))
             if deform_scale:
                 disp = values * np.float32(deform_scale)
                 if self.index is not None:
@@ -91,6 +130,7 @@ class FieldView:
         width = diag / max(len(base), 1) ** (1.0 / 3.0) * 0.8
         geom.CreateWidthsAttr().Set(Vt.FloatArray([width]))
         geom.SetWidthsInterpolation(UsdGeom.Tokens.constant)
+        _bind(geom.GetPrim(), UsdShade.Material.Get(stage, MATERIAL_PATH))
         self.points_layer = _Layer(geom, base)
         self.mesh_layer = None
 
@@ -109,6 +149,7 @@ class FieldView:
             Vt.IntArray.FromNumpy(np.ascontiguousarray(faces, dtype=np.int32).ravel()))
         mesh.CreateSubdivisionSchemeAttr().Set(UsdGeom.Tokens.none)
         mesh.CreateDoubleSidedAttr().Set(True)
+        _bind(mesh.GetPrim(), UsdShade.Material.Get(stage, MATERIAL_PATH))
         self.mesh_layer = _Layer(mesh, points, np.asarray(index, dtype=np.int64))
 
     def set_display(self, display):
@@ -235,6 +276,7 @@ class StageUpdater:
         scale = self.units_in_meters / UsdGeom.GetStageMetersPerUnit(stage)
         root.ClearXformOpOrder()
         root.AddScaleOp().Set(Gf.Vec3f(scale, scale, scale))
+        _define_field_material(stage)
         for rom, points in arrays.items():
             self.views[rom] = FieldView(stage, rom, points)
         if self.on_geometry_built is not None:

@@ -30,14 +30,21 @@ _LUT_SIZE = 256
 _LUTS = {}
 
 
-def _lut(name):
-    lut = _LUTS.get(name)
+def srgb_to_linear(c):
+    c = np.asarray(c, dtype=np.float32)
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4).astype(np.float32)
+
+
+def _lut(name, linear):
+    lut = _LUTS.get((name, linear))
     if lut is None:
         ctrl = np.asarray(_MAPS[name], dtype=np.float32)
         xs = np.linspace(0.0, 1.0, len(ctrl))
         t = np.linspace(0.0, 1.0, _LUT_SIZE)
         lut = np.stack([np.interp(t, xs, ctrl[:, c]) for c in range(3)], axis=1).astype(np.float32)
-        _LUTS[name] = lut
+        if linear:
+            lut = srgb_to_linear(lut)
+        _LUTS[(name, linear)] = lut
     return lut
 
 
@@ -49,9 +56,13 @@ def scalarize(values):
     return values
 
 
-def apply(scalars, vmin, vmax, name="turbo"):
-    """(N,) scalars -> (N, 3) float32 RGB in [0, 1]."""
-    lut = _lut(name)
+def apply(scalars, vmin, vmax, name="turbo", linear=True):
+    """(N,) scalars -> (N, 3) float32 RGB in [0, 1].
+
+    The maps are defined in sRGB; ``linear=True`` (default) returns linear values,
+    which is what USD ``displayColor`` and RTX expect.
+    """
+    lut = _lut(name, linear)
     scalars = np.nan_to_num(scalars, nan=vmin, posinf=vmax, neginf=vmin)
     span = vmax - vmin
     if not np.isfinite(span) or span <= 0:
