@@ -94,6 +94,10 @@ works/
 - kit-app-template 110 브랜치 구조 및 Kit 내장 Python 버전 확인
 
 ## 진행 기록
+- 실모델 1차 결과(폐쇄망): M1 64만 점(t=6.2 ms), M2 2,600만 점(l=22 s, t=470 ms/스텝), K 줄 fps=0(수신 스레드 이전 버전).
+  - pytwin은 `evaluate_step_by_step`마다 전체 필드를 재구성(`_update_output_field`) → 점 상한 도입(`decimate.py`):
+    dynamic은 pytwin `TbRom`의 기저/점 데이터를 고정 무작위 표본으로 축소(변환 포함 계산은 pytwin 그대로, 전체 기저 메모리 해제),
+    static/예외는 전체 계산 후 슬라이스. 테스트로 표본 값 = 전체 필드 값 검증. 재구성 비용 추정(10모드): 26M 58 ms → 1M 2.5 ms.
 - 대형 모델 버벅임 대응 (`scripts/fake_worker.py` + `scripts/kit_load_bench.py`, 100만 점 벡터장 + 메쉬 200만 삼각형, 30 fps 송신):
   - 원인 1: 수신을 Kit asyncio 루프(앱 업데이트당 1회 실행)에서 하여 12 MB 프레임이 여러 틱에 걸쳐 읽힘
     → 전용 수신 스레드(블로킹 소켓 `recv_into`, 배열 변환까지 스레드에서), 메인 스레드는 틱마다 최신 프레임만 처리.

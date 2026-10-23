@@ -235,8 +235,13 @@ class TwinVizWindow:
     def _on_session_changed(self, what):
         if what == "model":
             info = self._session.model_info
-            npts = ", ".join(r["name"] for r in info["tbroms"])
-            self._model_label.text = f"{info['name']}  mode={info['mode']}  TBROM: {npts}"
+            def describe(r):
+                if r.get("decimation"):
+                    return f"{r['name']} ({r['shown']:,} of {r['points']:,} points)"
+                return r["name"]
+
+            roms = ", ".join(describe(r) for r in info["tbroms"])
+            self._model_label.text = f"{info['name']}  mode={info['mode']}  TBROM: {roms}"
             self._inputs_frame.rebuild()
             self._outputs_frame.rebuild()
         elif what == "mesh":

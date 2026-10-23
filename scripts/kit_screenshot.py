@@ -42,10 +42,35 @@ disp mesh | points (what is shown)
 fps  frames/s that reached the stage while running (dynamic, run>0); '-' otherwise.
      With realtime=1 it is capped at 1/step (20); use realtime=0 to measure throughput.
 rs   automatic worker restarts
-we   worker error log lines"""
+we   worker error log lines
+lh   load: longest app update [ms] from Load until the first frame is shown
+rh   run: p95/longest app update [ms] while running ('-' if not run)"""
 
 
-def report_line(session, model, run_fps):
+class TickRecorder:
+    """Records intervals between app updates; long ones are what users feel as stutter."""
+
+    def __init__(self):
+        import carb.eventdispatcher
+
+        self.intervals = []
+        self._last = None
+        self._sub = carb.eventdispatcher.get_eventdispatcher().observe_event(
+            event_name=omni.kit.app.GLOBAL_EVENT_UPDATE, observer_name="kit_screenshot.ticks",
+            on_event=self._tick)
+
+    def _tick(self, _):
+        now = time.perf_counter()
+        if self._last is not None:
+            self.intervals.append((now - self._last) * 1000)
+        self._last = now
+
+    def take(self):
+        out, self.intervals = self.intervals, []
+        return out
+
+
+def report_line(session, model, run_fps, load_ticks, run_ticks):
     names = sorted(p.name for p in (REPO / "models").glob("*.twin"))
     n = names.index(model) + 1 if model in names else 0
     updater = session.updater
@@ -59,7 +84,9 @@ def report_line(session, model, run_fps):
         disp = "mesh" if use_mesh else "points"
     we = sum(1 for _, level, _ in session.log if level == "error")
     fps = f"{run_fps:.0f}" if run_fps is not None else "-"
-    return f"K{n} ok col={col} disp={disp} fps={fps} rs={session.restarts} we={we}"
+    lh = f"{max(load_ticks):.0f}" if load_ticks else "-"
+    rh = f"{np.percentile(run_ticks, 95):.0f}/{max(run_ticks):.0f}" if run_ticks else "-"
+    return f"K{n} ok col={col} disp={disp} fps={fps} rs={session.restarts} we={we} lh={lh} rh={rh}"
 
 
 def setting(key, default):
@@ -101,8 +128,12 @@ async def main():
         session = get_session()
         await frames(60)  # let the viewport come up
 
+        ticks = TickRecorder()
         await session.load(REPO / "models" / model)
         await wait_until(lambda: session.updater.views and session.updater.frames_applied > 0)
+        await frames(10)  # include the renderer picking up the new geometry
+        load_ticks = ticks.take()
+        run_ticks = []
         for name, value in inputs.items():
             session.set_input(name, value)
         # Dynamic models apply inputs on the next step, so only static ones answer with a frame.
@@ -115,7 +146,9 @@ async def main():
         if run_s and session.mode == "dynamic":
             await session.start(step_size=0.05, realtime=realtime)
             applied0 = session.updater.frames_applied
+            ticks.take()
             await asyncio.sleep(run_s)
+            run_ticks = ticks.take()
             run_fps = (session.updater.frames_applied - applied0) / run_s
             await session.pause()
 
@@ -140,7 +173,7 @@ async def main():
         carb.log_warn(f"[kit_screenshot] wrote {out}")
         print(f"KIT_SCREENSHOT {out}", flush=True)
         if report:
-            print(report_line(session, model, run_fps), flush=True)
+            print(report_line(session, model, run_fps, load_ticks, run_ticks), flush=True)
     except Exception as exc:
         carb.log_error(f"[kit_screenshot] failed: {exc}")
         print(f"KIT_SCREENSHOT_FAILED {exc}", flush=True)

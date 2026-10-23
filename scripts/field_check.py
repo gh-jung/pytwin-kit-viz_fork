@@ -34,6 +34,8 @@ Mn   model number (sorted file names); ok | ERR <stage> <error>
 m    mode: d = dynamic (stepped), s = static (re-initialized per input change)
 r    number of TBROMs
 p    points per TBROM (joined with '+')
+d    points actually computed/sent per TBROM when above --max-points: <n>s = pytwin shrunk
+     to the sample (fast), <n>c = full field computed then sliced; '-' = all points
 f    field per TBROM: s = scalar, v = vector, x<k> = k components
 l    load time [s] (instantiate + init + geometry + mesh mapping)
 t    d: ms per time step incl. snapshots; s: ms per input change (re-init + read)
@@ -86,13 +88,13 @@ class Collector:
         return [h["message"] for h, _ in self.msgs if h["type"] == P.MSG_ERROR]
 
 
-def check(path):
+def check(path, max_points):
     out = Collector()
     runner = TwinRunner(out)  # driven synchronously on this thread; its thread is never started
     stage = "LOAD"
     try:
         t0 = time.perf_counter()
-        runner._handle({"type": P.MSG_LOAD, "path": str(path)})
+        runner._handle({"type": P.MSG_LOAD, "path": str(path), "max_points": max_points})
         load_s = time.perf_counter() - t0
 
         info, _ = out.last(P.MSG_MODEL_INFO)
@@ -139,8 +141,15 @@ def check(path):
         else:
             mesh = "-"
 
+        shown = {r["name"]: r for r in info["tbroms"]}
+
+        def dec(r):
+            how = shown[r].get("decimation")
+            return f"{shown[r]['shown']}{'s' if how == 'shrink' else 'c'}" if how else "-"
+
         return (f"ok m={'d' if runner._mode == MODE_DYNAMIC else 's'} r={len(roms)} "
-                f"p={'+'.join(str(len(geom.get(r, []))) for r in roms)} "
+                f"p={'+'.join(str(shown[r].get('points') or len(geom.get(r, []))) for r in roms)} "
+                f"d={'+'.join(dec(r) for r in roms)} "
                 f"f={'+'.join(_field_code(fields[r]) for r in roms if r in fields)} "
                 f"l={load_s:.1f} t={t_ms:.1f} nan={bad} mesh={mesh}")
     except Exception as exc:
@@ -156,6 +165,8 @@ def main():
     ap.add_argument("models", nargs="?", default=str(REPO / "models"),
                     help="folder with .twin files (and optional .twinviz.json sidecars)")
     ap.add_argument("--legend", action="store_true", help="print the output legend and exit")
+    ap.add_argument("--max-points", type=int, default=1_000_000,
+                    help="per-TBROM point budget, same as the app's max_display_points (0 = no limit)")
     args = ap.parse_args()
     if args.legend:
         print(LEGEND)
@@ -167,7 +178,7 @@ def main():
     if not twins:
         print("M0 ERR LOAD no .twin files", flush=True)
     for i, path in enumerate(twins, 1):
-        print(f"M{i} {check(path)}", flush=True)
+        print(f"M{i} {check(path, args.max_points or None)}", flush=True)
 
 
 if __name__ == "__main__":

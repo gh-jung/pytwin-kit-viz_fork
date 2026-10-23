@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from . import protocol as P
+from .decimate import SHRINK, SLICE, sample_indices, shrink_tbrom
 from .mesh import build_meshes, read_sidecar
 
 log = logging.getLogger(__name__)
@@ -61,6 +62,8 @@ class TwinRunner:
         self._realtime = True
         self._speed = 1.0
         self._next_wall = 0.0
+        self._sel = {}      # rom -> sampled point indices to slice out of full fields
+        self._shown = {}    # rom -> (full point count, shown point count, SHRINK | SLICE | None)
 
     # ---- public (any thread) -------------------------------------------
 
@@ -107,7 +110,7 @@ class TwinRunner:
     def _handle(self, cmd):
         t = cmd["type"]
         if t == P.MSG_LOAD:
-            self._load(cmd["path"], cmd.get("meshes"), cmd.get("tolerance_factor"))
+            self._load(cmd["path"], cmd.get("meshes"), cmd.get("tolerance_factor"), cmd.get("max_points"))
         elif self._tm is None:
             raise RuntimeError("no model loaded")
         elif t == P.MSG_INIT:
@@ -141,7 +144,7 @@ class TwinRunner:
 
     # ---- model lifecycle -----------------------------------------------------
 
-    def _load(self, path, meshes=None, tolerance_factor=None):
+    def _load(self, path, meshes=None, tolerance_factor=None, max_points=None):
         from pytwin import TwinModel  # heavy import, only on the runner thread
 
         path = Path(path)
@@ -165,6 +168,7 @@ class TwinRunner:
                     raise RuntimeError(f"TBROM {rom} exposes neither mode outputs nor stored snapshots")
                 self._mode = MODE_STATIC
         log.info("loaded in %.2fs, mode=%s", time.perf_counter() - t0, self._mode)
+        self._limit_points(max_points)
 
         mesh_paths, sidecar_factor = read_sidecar(path)
         mesh_paths.update(meshes or {})
@@ -174,6 +178,26 @@ class TwinRunner:
         points = self._emit_geometry()
         self._emit_meshes(mesh_paths, tolerance_factor, points)
         self._initialize()
+
+    def _limit_points(self, max_points):
+        """Apply the point budget per TBROM (see decimate.py)."""
+        self._sel = {}
+        self._shown = {}
+        tbroms = getattr(self._tm, "_tbroms", {})
+        for rom in self._tm.tbrom_names:
+            tbrom = tbroms.get(rom)
+            n = int(tbrom.nb_points) if tbrom is not None else len(self._tm.generate_points(rom, on_disk=False))
+            if not max_points or n <= max_points:
+                self._shown[rom] = (n, n, None)
+                continue
+            sel = sample_indices(n, int(max_points))
+            how = SLICE
+            if self._mode == MODE_DYNAMIC and tbrom is not None and shrink_tbrom(tbrom, sel):
+                how = SHRINK
+            else:
+                self._sel[rom] = sel
+            self._shown[rom] = (n, len(sel), how)
+            log.info("%s: showing %d of %d points (%s)", rom, len(sel), n, how)
 
     def _has_output_modes(self, rom):
         """Whether the TBROM's mode coefficients are twin outputs (in-memory snapshots work)."""
@@ -225,8 +249,12 @@ class TwinRunner:
         tm = self._tm
         roms = []
         for rom in tm.tbrom_names:
+            n_full, n_shown, how = self._shown.get(rom, (None, None, None))
             roms.append({
                 "name": rom,
+                "points": n_full,
+                "shown": n_shown,
+                "decimation": how,
                 "field": _py(tm.get_field_output_name(rom)),
                 "location": _py(tm.get_tbrom_data_location(rom)),
                 "field_inputs": [_py(x) for x in tm.get_field_input_names(rom)],
@@ -246,8 +274,10 @@ class TwinRunner:
     def _emit_geometry(self):
         arrays = {}
         for rom in self._tm.tbrom_names:
-            pts = np.asarray(self._tm.generate_points(rom, on_disk=False), dtype=np.float32)
-            arrays[rom] = pts.reshape(-1, 3)
+            pts = np.asarray(self._tm.generate_points(rom, on_disk=False), dtype=np.float32).reshape(-1, 3)
+            if rom in self._sel:
+                pts = pts[self._sel[rom]]
+            arrays[rom] = pts
         meta, payload = P.pack_arrays(arrays)
         self._emit({"type": P.MSG_GEOMETRY, "arrays": meta}, payload)
         return arrays
@@ -276,6 +306,9 @@ class TwinRunner:
             from pytwin import read_binary
 
             data = read_binary(tm.get_snapshot_filepath(rom, tm.evaluation_time))
+        data = np.asarray(data)
+        if rom in self._sel:
+            data = data[self._sel[rom]]
         return np.asarray(data, dtype=np.float32)
 
     def _emit_frame(self):

@@ -18,7 +18,8 @@ RESTART_BACKOFF_S = 1.0     # doubled after every failed attempt
 
 class TwinSession:
     def __init__(self, python_exe, worker_root, units_in_meters=1.0, write_backend="fabric",
-                 debug_worker=False):
+                 debug_worker=False, max_points=1_000_000):
+        self.max_points = max_points  # per TBROM; larger fields are sampled by the worker
         self.worker = WorkerProcess(python_exe, worker_root, debuggable=debug_worker)
         self.client = TwinClient()
         self.updater = StageUpdater(units_in_meters, write_backend)
@@ -117,7 +118,7 @@ class TwinSession:
         self.mesh_stats = {}
         self.last_frame = None
         self.updater.clear()
-        msg = {"type": P.MSG_LOAD, "path": str(path)}
+        msg = {"type": P.MSG_LOAD, "path": str(path), "max_points": self.max_points}
         if meshes:
             msg["meshes"] = {k: str(v) for k, v in meshes.items()}
         await self.client.send(msg)

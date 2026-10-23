@@ -40,6 +40,7 @@ cd kit-app; .\repo.bat test
 | `models_dir` | 빈 값 = `models/` | Load 목록에 보이는 `.twin` 폴더 |
 | `model_units_in_meters` | `1.0` | TBROM 좌표 단위 |
 | `write_backend` | `fabric` | 프레임 기록 경로 (`fabric` = USDRT, `usd`) |
+| `max_display_points` | `1000000` | TBROM당 점 상한. 넘으면 워커가 무작위 표본만 계산·전송 (`0` = 무제한) |
 | `debug_worker` | `false` | `true`면 디버거(`omni.kit.debug.python`)가 워커에 붙음 — 디버깅 전용, 느림 |
 
 메쉬 표시는 [models/README.md](models/README.md)의 사이드카 파일 참고.

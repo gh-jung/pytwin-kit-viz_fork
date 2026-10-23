@@ -31,8 +31,8 @@
 
 최종 답 예시:
 ENV py=3.12.10 pytwin=0.13.0 pv=0.49.1 mr=0.56.0
-M1 ok m=d r=1 p=1332 f=v l=0.5 t=1.0 nan=0 mesh=rst/2352/0.0
-K1 ok col=ok disp=mesh fps=117 rs=0 we=0
+M1 ok m=d r=1 p=1332 d=- f=v l=0.5 t=1.0 nan=0 mesh=rst/2352/0.0
+K1 ok col=ok disp=mesh fps=117 rs=0 we=0 lh=120 rh=9/14
 ```
 
 화면이 실제로 맞게 보이는지는 사람이 `_screenshots\<모델>_viewport.png`를 보고 판단해서,
@@ -46,7 +46,9 @@ ENV  py, pytwin, pv (pyvista), mr (ansys-mapdl-reader) 버전; '-' = 미설치
 Mn   모델 번호; ok | ERR <단계> <오류>    (단계: LOAD INIT STEP MESH)
 m    d = dynamic(스텝 진행), s = static(입력 변경마다 재초기화)
 r    TBROM 개수
-p    TBROM별 점 개수 ('+'로 연결)
+p    TBROM별 전체 점 개수 ('+'로 연결)
+d    점 상한(--max-points, 기본 100만) 초과 시 실제 계산·전송·표시하는 점 수:
+     <n>s = pytwin을 표본으로 축소(빠름), <n>c = 전체 계산 후 잘라냄, '-' = 전체 사용
 f    TBROM별 필드: s = 스칼라, v = 벡터, x<k> = k성분
 l    로드 시간 [s] (생성 + 초기화 + 좌표 + 메쉬 매핑)
 t    d: 스텝당 ms (스냅샷 포함), s: 입력 변경당 ms (재초기화 + 읽기)
@@ -62,4 +64,6 @@ disp mesh | points (표시된 형태)
 fps  실행 중 스테이지에 반영된 초당 프레임 (dynamic만, 그 외 '-')
 rs   워커 자동 재시작 횟수
 we   워커 오류 로그 줄 수
+lh   로드: Load부터 첫 프레임 표시까지 가장 긴 앱 업데이트 [ms] (멈춤)
+rh   실행: 앱 업데이트 p95/최대 [ms] (멈춤; 8~17이면 정상, 50 이상이면 버벅임)
 ```

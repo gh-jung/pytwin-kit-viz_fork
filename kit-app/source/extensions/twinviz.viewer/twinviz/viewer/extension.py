@@ -59,9 +59,10 @@ class TwinVizExtension(omni.ext.IExt):
         units = settings.get(f"{SETTINGS_ROOT}/model_units_in_meters") or 1.0
         backend = settings.get(f"{SETTINGS_ROOT}/write_backend") or "fabric"
         debug_worker = bool(settings.get(f"{SETTINGS_ROOT}/debug_worker"))
+        max_points = int(settings.get(f"{SETTINGS_ROOT}/max_display_points") or 0) or None
 
         self._session = TwinSession(python_exe, worker_root, units_in_meters=units, write_backend=backend,
-                                    debug_worker=debug_worker)
+                                    debug_worker=debug_worker, max_points=max_points)
         self._window = TwinVizWindow(self._session, models_dir)
         carb.log_info(f"[twinviz.viewer] worker python: {python_exe}, models: {models_dir}")
 

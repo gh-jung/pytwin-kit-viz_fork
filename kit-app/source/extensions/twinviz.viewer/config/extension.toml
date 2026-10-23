@@ -40,6 +40,9 @@ exts."twinviz.viewer".model_units_in_meters = 1.0
 exts."twinviz.viewer".write_backend = "fabric"
 # true = let omni.kit.debug.python attach its debugger to the worker (much slower; for debugging only).
 exts."twinviz.viewer".debug_worker = false
+# Per-TBROM point budget. Larger fields are randomly sampled by the worker (computed, sent and drawn
+# only for these points). 0 = no limit.
+exts."twinviz.viewer".max_display_points = 1000000
 
 
 [[python.module]]  # Main python module this extension provides, it will be publicly available as "import twinviz.viewer"

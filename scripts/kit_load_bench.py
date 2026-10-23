@@ -6,6 +6,7 @@ wraps the main-thread entry points with timers and records update-tick intervals
     kit-app\\_build\\windows-x86_64\\release\\twinviz.app.kit.bat --exec scripts\\kit_load_bench.py
         [--/twinviz/bench/points=1000000] [--/twinviz/bench/mesh=1] [--/twinviz/bench/vector=1]
         [--/twinviz/bench/outputs=200] [--/twinviz/bench/rate=30] [--/twinviz/bench/run=6]
+        [--/twinviz/bench/model=ThermalTBROM_23R2.twin]   # real worker + model instead of fake data
 """
 
 import asyncio
@@ -93,6 +94,7 @@ async def main():
             await app.next_update_async()
 
         points = int(setting("points", 1_000_000))
+        model = str(setting("model", ""))
         args = [str(session.worker.python_exe), str(REPO / "scripts" / "fake_worker.py"),
                 "--points", str(points), "--outputs", str(setting("outputs", 200)),
                 "--rate", str(setting("rate", 30))]
@@ -100,14 +102,20 @@ async def main():
             args.append("--mesh")
         if str(setting("vector", "1")) == "1":
             args.append("--vector")
-        with without_debugger_hooks():
-            proc = subprocess.Popen(args, stdout=subprocess.PIPE, text=True)
-        port = int(proc.stdout.readline().split("port=")[1])
-        progress(f"fake worker on port {port}")
-        await session.client.connect(port)
-        progress("connected")
+        if not model:
+            with without_debugger_hooks():
+                proc = subprocess.Popen(args, stdout=subprocess.PIPE, text=True)
+            port = int(proc.stdout.readline().split("port=")[1])
+            progress(f"fake worker on port {port}")
+            await session.client.connect(port)
+            progress("connected")
+
+        import twinviz.viewer.client as client_mod
+        import twinviz.viewer.process_manager as pm_mod
 
         for cls, names in ((session_mod.TwinSession, ["_on_model_info", "_on_geometry", "_on_mesh_map", "_on_frame"]),
+                           (client_mod.TwinClient, ["pump", "_dispatch"]),
+                           (pm_mod.WorkerProcess, ["start", "_popen"]),
                            (updater_mod.StageUpdater, ["_build", "_attach_meshes", "_commit_finished_job",
                                                        "_submit", "_remove_prims"]),
                            (window_mod.TwinVizWindow, ["_on_session_changed", "_frame_prims", "_refresh_log"])):
@@ -119,7 +127,7 @@ async def main():
         ticks.take()
 
         t0 = time.perf_counter()
-        await session.load("fake")
+        await session.load(REPO / "models" / model if model else "fake")
         progress("load sent")
         seen = set()
         while session.updater.frames_applied == 0 or not session.updater.views:
@@ -138,14 +146,16 @@ async def main():
         load_ticks = ticks.take()
 
         run_s = float(setting("run", 6))
+        if session.mode != "dynamic":
+            run_s = 0.0
         applied0 = session.updater.frames_applied
         await session.start(0.033, realtime=True)
         await asyncio.sleep(run_s)
-        applied = (session.updater.frames_applied - applied0) / run_s
+        applied = (session.updater.frames_applied - applied0) / run_s if run_s else 0.0
         await session.pause()
         run_ticks = ticks.take()
 
-        print(f"BENCH points={points} mesh={setting('mesh', '1')} vector={setting('vector', '1')} "
+        print(f"BENCH model={model or 'fake'} points={points} mesh={setting('mesh', '1')} vector={setting('vector', '1')} "
               f"first_frame={load_s:.2f}s applied={applied:.1f}/s", flush=True)
         print("BENCH " + summary("LOAD", load_ticks), flush=True)
         print("BENCH " + summary("RUN ", run_ticks), flush=True)
