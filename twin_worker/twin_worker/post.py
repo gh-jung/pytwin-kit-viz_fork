@@ -61,6 +61,7 @@ class Domain:
         self.volume = volume
         self.volume_index = volume_index
         self.voxel = volume is None
+        self.seed_sets = {}  # named selection -> point coordinates, for seeding streamlines
         self._diag = float(np.linalg.norm(self.points.max(0) - self.points.min(0))) or 1.0
 
     # Built on first use: a KD-tree over a million points takes about a second.
@@ -122,6 +123,9 @@ class Domain:
         self.tolerance = max(self.tolerance, float(np.linalg.norm(spacing)))
         index[dist > self.tolerance] = -1
         inside = 100.0 * (index >= 0).mean()
+        # Streamlines trace on the regular grid (fast cell lookup) with zero velocity outside,
+        # which simply stops them; contours use the trimmed copy.
+        self._stream_volume, self._stream_index = grid, index
         self.volume, self.volume_index = _inside_only(grid, index)
         log.info("voxel grid %s (%d nodes, %.1f%% inside data)", tuple(dims), grid.n_points, inside)
 
@@ -170,22 +174,49 @@ class Domain:
             "scalars": np.asarray(iso.point_data["s"], dtype=np.float32),
         }
 
-    def streamlines(self, vectors, seeds):
+    def _seed_candidates(self):
+        """Cell centres of the trimmed volume (inside the data), cached."""
+        if getattr(self, "_centers", None) is None:
+            self._centers = np.asarray(self.volume.cell_centers().points)
+        return self._centers
+
+    def _seeds(self, count, source):
+        """``count`` seed points inside the volume, from a named selection or anywhere."""
+        from scipy.spatial import cKDTree
+
+        centers = self._seed_candidates()
+        rng = np.random.default_rng(0)
+        if source in self.seed_sets and len(self.seed_sets[source]):
+            # Named-selection points (e.g. an inlet) lie on the boundary where the tracer cannot
+            # start; use the nearest cell centres inside the volume instead.
+            if getattr(self, "_center_tree", None) is None:
+                self._center_tree = cKDTree(centers)
+            pts = self.seed_sets[source]
+            pts = pts[rng.choice(len(pts), size=min(count * 4, len(pts)), replace=False)]
+            # Small selections (an inlet may have a few dozen points): take several nearby
+            # cell centres per point so the requested seed count can still be met.
+            k = int(min(max(np.ceil(2 * count / len(pts)), 1), 64, len(centers)))
+            _, nearest = self._center_tree.query(pts, k=k)
+            nearest = np.unique(nearest)
+            return centers[nearest[rng.choice(len(nearest), size=min(count, len(nearest)), replace=False)]]
+        return centers[rng.choice(len(centers), size=min(count, len(centers)), replace=False)]
+
+    def streamlines(self, vectors, seeds, source=None):
         vectors = np.asarray(vectors, dtype=np.float32)
         if vectors.ndim != 2 or vectors.shape[1] != 3 or seeds <= 0:
             return None
         import pyvista as pv
 
         self.ensure_volume()
-        if self.volume.n_points == 0:
+        grid = getattr(self, "_stream_volume", None) or self.volume
+        index = self._stream_index if grid is getattr(self, "_stream_volume", None) else self.volume_index
+        if grid.n_points == 0:
             return _empty_curves()
-        vol = self.volume.copy(deep=False)
-        vol.point_data["v"] = _gather(vectors, self.volume_index, fill=0.0)
+        vol = grid.copy(deep=False)
+        vol.point_data["v"] = _gather(vectors, index, fill=0.0)
         # Seed at cell centres: always inside the volume (TBROM points often lie on its boundary,
         # where the tracer cannot locate a starting cell).
-        centers = np.asarray(vol.cell_centers().points)
-        rng = np.random.default_rng(0)
-        seed_pts = centers[rng.choice(len(centers), size=min(seeds, len(centers)), replace=False)]
+        seed_pts = self._seeds(seeds, source)
         lines = vol.streamlines_from_source(
             pv.PolyData(seed_pts), vectors="v", integration_direction="both",
             initial_step_length=0.2, step_unit="cl", max_steps=STREAM_MAX_STEPS,
@@ -276,7 +307,7 @@ class PostWorker:
 
     def configure(self, settings):
         """``{"contours": n, "isolines": bool, "isosurfaces": n | [levels], "streamlines": seeds,
-        "range": [vmin, vmax] | None}`` (missing keys keep their value)."""
+        "seed": named selection | None, "range": [vmin, vmax] | None}`` (missing keys keep their value)."""
         with self._cond:
             self._settings.update(settings)
             if self._last is not None:
@@ -342,7 +373,7 @@ class PostWorker:
                 levels = list(iso) if isinstance(iso, (list, tuple)) else contour_levels(vmin, vmax, int(iso))
                 outputs[ISOSURFACES] = dom.isosurfaces(scalars, levels)
             if settings.get("streamlines"):
-                outputs[STREAMLINES] = dom.streamlines(values, int(settings["streamlines"]))
+                outputs[STREAMLINES] = dom.streamlines(values, int(settings["streamlines"]), settings.get("seed"))
             for kind, out in outputs.items():
                 if out is None:
                     continue

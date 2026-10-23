@@ -94,6 +94,12 @@ works/
 - kit-app-template 110 브랜치 구조 및 Kit 내장 Python 버전 확인
 
 ## 진행 기록
+- 컨투어/등치면/스트림라인 (워커 `post.py` 후처리 스레드, 최신 프레임만, 최대 10회/s):
+  - 영역(Domain): 소스 메쉬(솔리드) 또는 복셀 격자(메쉬 없음·쉘 메쉬, 최대 96³ 노드). 데이터 밖 셀은 1회 잘라냄.
+  - 밴드 색(Kit 컬러맵, 경계 = 등치선 레벨), 표면 등치선(VTK contour → BasisCurves), 등치면(→ Mesh, Show: none),
+    스트림라인(VTK stream tracer, 시드 = 내부 셀 중심, named selection(예: inlet) 기준 가능; 복셀은 정규 격자에서 추적).
+  - HX 속도 TBROM(87만 점, 메쉬 없음): 복셀 생성 2.5 s(1회), 스트림라인 시드 300개 3.3 s → 정규 격자 추적으로 0.51 s.
+  - 예제 FEA `.rst`는 쉘(사각형) 메쉬 → 볼륨 셀 없음 → 복셀 경로.
 - 실모델 1차 결과(폐쇄망): M1 64만 점(t=6.2 ms), M2 2,600만 점(l=22 s, t=470 ms/스텝), K 줄 fps=0(수신 스레드 이전 버전).
   - pytwin은 `evaluate_step_by_step`마다 전체 필드를 재구성(`_update_output_field`) → 점 상한 도입(`decimate.py`):
     dynamic은 pytwin `TbRom`의 기저/점 데이터를 고정 무작위 표본으로 축소(변환 포함 계산은 pytwin 그대로, 전체 기저 메모리 해제),

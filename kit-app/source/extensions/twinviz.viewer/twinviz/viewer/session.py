@@ -35,7 +35,7 @@ class TwinSession:
         self.restarts = 0             # automatic restarts since the last user action
         # Worker post-processing (see twin_worker/post.py); re-sent after every load.
         self.post_settings = {"contours": 9, "isolines": False, "isosurfaces": 0, "streamlines": 0,
-                              "range": None}
+                              "seed": None, "range": None}
         self.recovering = False
 
         # What to restore after a worker crash.

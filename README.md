@@ -33,6 +33,11 @@ cd twin_worker; .\.venv\Scripts\python -m unittest discover -s tests -v
 cd kit-app; .\repo.bat test
 ```
 
+## 컨투어 / 등치면 / 스트림라인
+확장 창 **Contours / Streamlines**: Levels(레벨 수), Banded colors, Iso-lines(표면, 메쉬 필요), Isosurfaces(개수),
+Streamlines(시드 수, 벡터장만), Seed from(전체 또는 named selection). 내부를 보려면 Display의 Show를 `none`으로.
+계산은 워커의 후처리 스레드에서 하며, 메쉬가 없으면 복셀 격자를 씁니다.
+
 ## 확장 설정 (`kit-app/source/extensions/twinviz.viewer/config/extension.toml`)
 | 키 | 기본값 | 내용 |
 |---|---|---|

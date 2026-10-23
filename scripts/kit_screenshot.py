@@ -13,7 +13,7 @@ Settings (pass as --/twinviz/shot/<key>=<value>):
     realtime  0 = step as fast as possible while running (default 1)
     display mesh | points | none                  (default: extension default)
     bands   number of flat color bands, 0 = smooth (default 0)
-    post    worker post-processing "key:value,..." e.g. "isolines:1,contours:7,isosurfaces:2,streamlines:200"
+    post    worker post-processing "key:value,..." e.g. "isolines:1,contours:7,isosurfaces:2,streamlines:200,seed:inlet"
     report  1 = also print one short "K<n> ..." result line (see REPORT_LEGEND)
     out     output PNG path                       (default _screenshots/<model>.png)
 
@@ -156,7 +156,12 @@ async def main():
         bands = int(setting("bands", 0))
         if bands:
             session.updater.restyle(bands=bands)
-        post = {k: (bool(int(v)) if k == "isolines" else int(v))
+        def post_value(key, value):
+            if key == "isolines":
+                return bool(int(value))
+            return int(value) if value.lstrip("-").isdigit() else value  # e.g. seed:inlet
+
+        post = {k: post_value(k, v)
                 for k, v in (kv.split(":") for kv in str(setting("post", "")).split(",") if kv)}
         if post:
             await session.set_post(**post)

@@ -17,6 +17,7 @@ FEA = MODELS / "FEADeformationTBROM_23R2.twin"
 FEA_MESH = MODELS / "FEA_deformation.rst"
 THERMAL = MODELS / "ThermalTBROM_23R2.twin"
 THERMAL_MESH = MODELS / "ThermalTBROM.dat"
+HX = MODELS / "HXVelVectorTBROM_23R2.twin"
 
 
 class Collector:
@@ -123,6 +124,21 @@ class PostTest(unittest.TestCase):
             finally:
                 runner._unload()
                 runner._post.close()
+
+    @unittest.skipUnless(HX.is_file(), f"missing {HX}")
+    def test_hx_streamlines_from_inlet(self):
+        runner, out = session(HX, None, {"streamlines": 60, "seed": "inlet"},
+                              inputs={"Mass_Flow_HX": 1.0, "Tube_temperature": 350.0, "shell_inlet_temp": 300.0},
+                              steps=2)
+        try:
+            header, arrays = out.wait_post(timeout=120)
+            rom = header["items"][0]["rom"]
+            counts = arrays[f"{rom}/streamlines/counts"]
+            self.assertGreaterEqual(len(counts), 30)
+            self.assertGreater(np.median(counts), 50)  # lines run through the flow, not stubs
+        finally:
+            runner._unload()
+            runner._post.close()
 
 
 if __name__ == "__main__":

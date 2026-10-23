@@ -177,6 +177,7 @@ class TwinRunner:
             # field to disk on every step (seconds per step for tens of millions of points).
             self._store_params = {name: 0 for name in self._store_params}
         log.info("loaded in %.2fs, mode=%s", time.perf_counter() - t0, self._mode)
+        seed_sets = self._named_selection_points()  # before _limit_points changes point indexing
         self._limit_points(max_points)
 
         mesh_paths, sidecar_factor = read_sidecar(path)
@@ -187,8 +188,30 @@ class TwinRunner:
         points = self._emit_geometry()
         domains = self._emit_meshes(mesh_paths, tolerance_factor, points)
         # Meshless TBROMs get a voxel-grid domain (built when first needed).
-        self._post.set_domains({rom: domains.get(rom) or Domain(pts) for rom, pts in points.items()})
+        post_domains = {rom: domains.get(rom) or Domain(pts) for rom, pts in points.items()}
+        for rom, dom in post_domains.items():
+            dom.seed_sets = seed_sets.get(rom, {})
+        self._post.set_domains(post_domains)
         self._initialize()
+
+    def _named_selection_points(self, limit=20000):
+        """``{rom: {named selection: coordinates}}`` (sampled), for seeding streamlines."""
+        out = {}
+        rng = np.random.default_rng(0)
+        for rom in self._tm.tbrom_names:
+            sets = {}
+            for ns in self._tm.get_named_selections(rom):
+                try:
+                    pts = np.asarray(self._tm.generate_points(rom, on_disk=False, named_selection=ns))
+                except Exception:
+                    log.warning("could not read points of named selection %s", ns)
+                    continue
+                pts = pts.reshape(-1, 3)
+                if len(pts) > limit:
+                    pts = pts[rng.choice(len(pts), size=limit, replace=False)]
+                sets[str(ns)] = pts
+            out[rom] = sets
+        return out
 
     def _limit_points(self, max_points):
         """Apply the point budget per TBROM (see decimate.py)."""

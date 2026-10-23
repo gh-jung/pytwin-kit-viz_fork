@@ -195,6 +195,17 @@ class TwinVizWindow:
                     stream = ui.IntDrag(min=0, max=2000, step=10)
                     stream.model.set_value(int(post["streamlines"]))
                     stream.model.add_end_edit_fn(lambda m: self._post(streamlines=m.as_int))
+                with ui.HStack(height=22):
+                    ui.Label("Seed from", width=LABEL_W, tooltip="Anywhere, or a named selection such as an inlet")
+                    self._seed_frame = ui.Frame(build_fn=self._build_seed_combo)
+
+    def _build_seed_combo(self):
+        info = self._session.model_info
+        names = ["anywhere"] + (sorted({ns for r in info["tbroms"] for ns in r["named_selections"]}) if info else [])
+        current = self._session.post_settings.get("seed")
+        combo = ui.ComboBox(names.index(current) if current in names else 0, *names)
+        combo.model.get_item_value_model().add_value_changed_fn(
+            lambda m: self._post(seed=None if m.as_int == 0 else names[m.as_int]))
 
     def _on_levels(self, n):
         self._apply_bands()
@@ -296,6 +307,7 @@ class TwinVizWindow:
             self._model_label.text = f"{info['name']}  mode={info['mode']}  TBROM: {roms}"
             self._inputs_frame.rebuild()
             self._outputs_frame.rebuild()
+            self._seed_frame.rebuild()
         elif what == "mesh":
             for rom, st in self._session.mesh_stats.items():
                 self._model_label.text += (f"\nmesh {Path(st['path']).name}: {st['triangles']} tris, "
