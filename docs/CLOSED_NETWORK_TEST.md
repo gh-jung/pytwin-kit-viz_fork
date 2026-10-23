@@ -31,7 +31,7 @@
 
 최종 답 예시:
 ENV py=3.12.10 pytwin=0.13.0 pv=0.49.1 mr=0.56.0
-M1 ok m=d r=1 p=1332 d=- f=v l=0.5 t=1.0 nan=0 mesh=rst/2352/0.0
+M1 ok m=d r=1 p=1332 d=- f=v l=0.5 t=1.0 rt=0.8 fr=0.2 sn=0.0 nm=10 nan=0 mesh=rst/2352/0.0
 K1 ok col=ok disp=mesh fps=117 rs=0 we=0 lh=120 rh=9/14
 ```
 
@@ -43,7 +43,7 @@ K1 ok col=ok disp=mesh fps=117 rs=0 we=0 lh=120 rh=9/14
 ### `field_check.py` (M 줄)
 ```
 ENV  py, pytwin, pv (pyvista), mr (ansys-mapdl-reader) 버전; '-' = 미설치
-Mn   모델 번호; ok | ERR <단계> <오류>    (단계: LOAD INIT STEP MESH)
+Mn   모델 번호 (파일명 대소문자 무시 정렬; K 번호와 동일); ok | ERR <단계> <오류>    (단계: LOAD INIT STEP MESH)
 m    d = dynamic(스텝 진행), s = static(입력 변경마다 재초기화)
 r    TBROM 개수
 p    TBROM별 전체 점 개수 ('+'로 연결)
@@ -52,6 +52,10 @@ d    점 상한(--max-points, 기본 100만) 초과 시 실제 계산·전송·�
 f    TBROM별 필드: s = 스칼라, v = 벡터, x<k> = k성분
 l    로드 시간 [s] (생성 + 초기화 + 좌표 + 메쉬 매핑)
 t    d: 스텝당 ms (스냅샷 포함), s: 입력 변경당 ms (재초기화 + 읽기)
+rt   d: t 중 pytwin 스텝 시간 (twin 런타임 계산 + pytwin 출력 처리, 필드 재구성 제외)
+fr   d: t 중 TBROM 필드 재구성 시간 (모드 x 기저)
+sn   d: t 중 스냅샷 생성 + 프레임 패킹 시간
+nm   TBROM별 모드 수
 nan  마지막 프레임의 NaN/inf 개수
 mesh 확장자/삼각형 수/미매핑 % ('-' = 사이드카 없음, ERR(<원인>) = 실패)
 ```

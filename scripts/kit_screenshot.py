@@ -70,8 +70,13 @@ class TickRecorder:
         return out
 
 
+def model_files(folder=REPO / "models"):
+    """Same numbering as field_check.py: file names sorted case-insensitively."""
+    return sorted(Path(folder).glob("*.twin"), key=lambda p: (p.name.casefold(), p.name))
+
+
 def report_line(session, model, run_fps, load_ticks, run_ticks):
-    names = sorted(p.name for p in (REPO / "models").glob("*.twin"))
+    names = [p.name for p in model_files()]
     n = names.index(model) + 1 if model in names else 0
     updater = session.updater
     if not updater.views or updater.frames_applied == 0:
@@ -178,7 +183,7 @@ async def main():
         carb.log_error(f"[kit_screenshot] failed: {exc}")
         print(f"KIT_SCREENSHOT_FAILED {exc}", flush=True)
         if report:
-            names = sorted(p.name for p in (REPO / "models").glob("*.twin"))
+            names = [p.name for p in model_files()]
             n = names.index(model) + 1 if model in names else 0
             print(f"K{n} ERR {type(exc).__name__}: {str(exc)[:50]}", flush=True)
     finally:

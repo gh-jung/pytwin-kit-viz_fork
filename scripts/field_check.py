@@ -39,11 +39,45 @@ d    points actually computed/sent per TBROM when above --max-points: <n>s = pyt
 f    field per TBROM: s = scalar, v = vector, x<k> = k components
 l    load time [s] (instantiate + init + geometry + mesh mapping)
 t    d: ms per time step incl. snapshots; s: ms per input change (re-init + read)
+rt   d: of t, ms in pytwin evaluate_step_by_step excluding field reconstruction
+     (twin runtime solve + pytwin output handling)
+fr   d: of t, ms reconstructing TBROM fields (modes x basis)
+sn   d: of t, ms generating snapshots and packing the frame
+nm   modes per TBROM
 nan  NaN/inf values in the last frame
 mesh ext/triangles/unmapped% per TBROM ('-' = no mesh sidecar, ERR(<reason>) = failed)
 stages: LOAD INIT STEP MESH"""
 
 STEPS = 20
+
+
+class Timers:
+    """Accumulate time spent in selected pytwin / runner methods (patched on the class)."""
+
+    def __init__(self):
+        self.ms = {}
+        self._restore = []
+
+    def wrap(self, cls, name, key):
+        original = getattr(cls, name)
+        timers = self
+
+        def wrapper(*args, **kwargs):
+            t0 = time.perf_counter()
+            try:
+                return original(*args, **kwargs)
+            finally:
+                timers.ms[key] = timers.ms.get(key, 0.0) + (time.perf_counter() - t0) * 1000
+
+        setattr(cls, name, wrapper)
+        self._restore.append((cls, name, original))
+
+    def reset(self):
+        self.ms = {}
+
+    def restore(self):
+        for cls, name, original in reversed(self._restore):
+            setattr(cls, name, original)
 
 
 def _version(module):
@@ -89,8 +123,15 @@ class Collector:
 
 
 def check(path, max_points):
+    from pytwin import TwinModel
+    from pytwin.evaluate.tbrom import TbRom
+
     out = Collector()
     runner = TwinRunner(out)  # driven synchronously on this thread; its thread is never started
+    timers = Timers()
+    timers.wrap(TwinModel, "evaluate_step_by_step", "step")
+    timers.wrap(TbRom, "_update_output_field", "field")
+    timers.wrap(TwinRunner, "_emit_frame", "emit")
     stage = "LOAD"
     try:
         t0 = time.perf_counter()
@@ -108,12 +149,17 @@ def check(path, max_points):
         n_frames = len([h for h, _ in out.msgs if h["type"] == P.MSG_FRAME])
         if runner._mode == MODE_DYNAMIC:
             runner._handle({"type": P.MSG_START, "step_size": 0.05, "realtime": False})
+            timers.reset()
             t0 = time.perf_counter()
             for _ in range(STEPS):
                 runner._tick()
             t_ms = (time.perf_counter() - t0) / STEPS * 1000
+            per = {k: v / STEPS for k, v in timers.ms.items()}
+            split = (f" rt={per.get('step', 0) - per.get('field', 0):.1f} fr={per.get('field', 0):.1f}"
+                     f" sn={per.get('emit', 0):.1f}")
         else:
             stage = "INIT"
+            split = ""
             inputs = dict(runner._inputs)
             t0 = time.perf_counter()
             runner._handle({"type": P.MSG_SET_INPUTS, "inputs": inputs})
@@ -151,13 +197,20 @@ def check(path, max_points):
                 f"p={'+'.join(str(shown[r].get('points') or len(geom.get(r, []))) for r in roms)} "
                 f"d={'+'.join(dec(r) for r in roms)} "
                 f"f={'+'.join(_field_code(fields[r]) for r in roms if r in fields)} "
-                f"l={load_s:.1f} t={t_ms:.1f} nan={bad} mesh={mesh}")
+                f"l={load_s:.1f} t={t_ms:.1f}{split} nm={'+'.join(str(nmodes(runner, r)) for r in roms)} "
+                f"nan={bad} mesh={mesh}")
     except Exception as exc:
         errors = out.errors()
         detail = errors[-1] if errors else _short(exc)
         return f"ERR {stage} {detail[:60]}"
     finally:
+        timers.restore()
         runner._unload()
+
+
+def nmodes(runner, rom):
+    tbrom = getattr(runner._tm, "_tbroms", {}).get(rom) if runner._tm is not None else None
+    return getattr(tbrom, "nb_modes", "?")
 
 
 def main():
@@ -174,7 +227,8 @@ def main():
     # pytwin and the worker log a lot; keep stdout to the result lines only.
     logging.disable(logging.CRITICAL)
     print(env_line(), flush=True)
-    twins = sorted(Path(args.models).glob("*.twin"))
+    # Same numbering as kit_screenshot.py: file names sorted case-insensitively.
+    twins = sorted(Path(args.models).glob("*.twin"), key=lambda p: (p.name.casefold(), p.name))
     if not twins:
         print("M0 ERR LOAD no .twin files", flush=True)
     for i, path in enumerate(twins, 1):
