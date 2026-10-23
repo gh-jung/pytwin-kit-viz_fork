@@ -44,6 +44,7 @@ rt   d: of t, ms in pytwin evaluate_step_by_step excluding field reconstruction
 fr   d: of t, ms reconstructing TBROM fields (modes x basis)
 sn   d: of t, ms generating snapshots and packing the frame
 nm   modes per TBROM
+ss   1 = runtime writes snapshot files (static models only; 0 expected for dynamic)
 nan  NaN/inf values in the last frame
 mesh ext/triangles/unmapped% per TBROM ('-' = no mesh sidecar, ERR(<reason>) = failed)
 stages: LOAD INIT STEP MESH"""
@@ -198,6 +199,7 @@ def check(path, max_points):
                 f"d={'+'.join(dec(r) for r in roms)} "
                 f"f={'+'.join(_field_code(fields[r]) for r in roms if r in fields)} "
                 f"l={load_s:.1f} t={t_ms:.1f}{split} nm={'+'.join(str(nmodes(runner, r)) for r in roms)} "
+                f"ss={int(info.get('store_snapshots', False))} "
                 f"nan={bad} mesh={mesh}")
     except Exception as exc:
         errors = out.errors()

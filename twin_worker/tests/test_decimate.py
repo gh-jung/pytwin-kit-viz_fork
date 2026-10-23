@@ -68,6 +68,12 @@ class DecimateTest(unittest.TestCase):
         np.testing.assert_allclose(fields[rom], full_fields[rom][sel], rtol=1e-6, atol=1e-12)
 
     @unittest.skipUnless(THERMAL.is_file(), f"missing {THERMAL}")
+    def test_store_snapshots_only_for_static(self):
+        info, _, _ = run(THERMAL, None, {"main_inlet_temperature": 300.0}, steps=0)
+        self.assertEqual(info["mode"], "static")
+        self.assertTrue(info["store_snapshots"])
+
+    @unittest.skipUnless(THERMAL.is_file(), f"missing {THERMAL}")
     def test_slice_static_matches_full_field(self):
         inputs = {"main_inlet_temperature": 290.0, "side_inlet_temperature": 360.0}
         info, geom, fields = run(THERMAL, 5000, inputs, steps=0)

@@ -167,6 +167,10 @@ class TwinRunner:
                 if not self._store_params:
                     raise RuntimeError(f"TBROM {rom} exposes neither mode outputs nor stored snapshots")
                 self._mode = MODE_STATIC
+        if self._mode == MODE_DYNAMIC:
+            # Snapshots come from memory; with store_snapshots on, the runtime writes the full
+            # field to disk on every step (seconds per step for tens of millions of points).
+            self._store_params = {name: 0 for name in self._store_params}
         log.info("loaded in %.2fs, mode=%s", time.perf_counter() - t0, self._mode)
         self._limit_points(max_points)
 
@@ -269,6 +273,7 @@ class TwinRunner:
             "outputs": [str(k) for k in tm.outputs],
             "parameters": _plain_dict(tm.parameters),
             "tbroms": roms,
+            "store_snapshots": any(v == 1 for v in self._store_params.values()),
         }
 
     def _emit_geometry(self):

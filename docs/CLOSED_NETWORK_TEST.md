@@ -56,6 +56,7 @@ rt   d: t 중 pytwin 스텝 시간 (twin 런타임 계산 + pytwin 출력 처리
 fr   d: t 중 TBROM 필드 재구성 시간 (모드 x 기저)
 sn   d: t 중 스냅샷 생성 + 프레임 패킹 시간
 nm   TBROM별 모드 수
+ss   1 = 런타임이 스냅샷 파일을 씀 (static 모델만 1, dynamic은 0이어야 정상)
 nan  마지막 프레임의 NaN/inf 개수
 mesh 확장자/삼각형 수/미매핑 % ('-' = 사이드카 없음, ERR(<원인>) = 실패)
 ```
