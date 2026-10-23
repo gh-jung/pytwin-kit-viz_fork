@@ -17,6 +17,7 @@ import omni.usd
 from pxr import Gf, Sdf, UsdGeom, UsdShade, Vt
 
 from . import colormap
+from .overlays import Overlays
 
 ROOT_PATH = "/World/TwinViz"
 MATERIAL_PATH = f"{ROOT_PATH}/Looks/FieldColor"
@@ -28,6 +29,7 @@ EMISSION_PRIMVAR = "fieldEmission"
 
 DISPLAY_POINTS = "points"
 DISPLAY_MESH = "mesh"
+DISPLAY_NONE = "none"    # hide the field, e.g. to see isosurfaces inside it
 
 BACKEND_FABRIC = "fabric"
 BACKEND_USD = "usd"
@@ -149,12 +151,12 @@ class _Layer:
         img = UsdGeom.Imageable(self.geom)
         img.MakeVisible() if visible else img.MakeInvisible()
 
-    def prepare(self, values, scalars, vrange, cmap, deform_scale):
+    def prepare(self, values, scalars, vrange, cmap, deform_scale, bands=0):
         """Arrays to write for one frame. Pure numpy: safe off the main thread."""
         if self.index is not None:
             values = values[self._safe_index] if deform_scale else None
             scalars = scalars[self._safe_index]
-        colors = colormap.apply(scalars, *vrange, cmap)
+        colors = colormap.apply(scalars, *vrange, cmap, bands=bands)
         if self.index is not None:
             colors[~self._valid] = UNMAPPED_COLOR
         out = {ATTR_COLOR: colors, ATTR_EMISSION: colors * np.float32(EMISSION_GAIN)}
@@ -193,6 +195,8 @@ class FieldView:
         self.is_vector = False
         self._stage = stage
         self._base_points = np.ascontiguousarray(points, dtype=np.float32)
+        span = self._base_points.max(axis=0) - self._base_points.min(axis=0) if len(points) else np.ones(3)
+        self.diag = float(np.linalg.norm(span)) or 1.0
         self.points_layer = None
         self.mesh_layer = None
 
@@ -228,12 +232,14 @@ class FieldView:
         self.mesh_layer = _Layer(mesh, points, self.backend, np.asarray(index, dtype=np.int64))
 
     def active_layer(self, display):
+        if display == DISPLAY_NONE:
+            return None
         use_mesh = display == DISPLAY_MESH and self.mesh_layer is not None
         return self.mesh_layer if use_mesh else self.points_layer
 
     def ensure_layer(self, display):
         """Author the prim ``display`` needs (main thread only)."""
-        if self.active_layer(display) is None:
+        if display != DISPLAY_NONE and self.active_layer(display) is None:
             self._create_points_layer()
 
     def set_display(self, display):
@@ -259,12 +265,16 @@ class FieldView:
         deform = style["deform_scale"] if is_vector else 0.0
         # Only the visible representation is updated; restyle() re-applies on switch.
         layer = self.active_layer(style["display"])
-        return layer, layer.prepare(values, scalars, vrange, style["colormap"], deform), vrange, is_vector
+        if layer is None:
+            return None, None, vrange, is_vector
+        arrays = layer.prepare(values, scalars, vrange, style["colormap"], deform, style.get("bands", 0))
+        return layer, arrays, vrange, is_vector
 
     def commit(self, prepared, display):
         layer, arrays, self.range, self.is_vector = prepared
         self.set_display(display)
-        layer.commit(arrays)
+        if layer is not None:
+            layer.commit(arrays)
 
     def apply(self, values, style):
         """prepare + commit on the calling thread."""
@@ -284,7 +294,11 @@ class StageUpdater:
             "vmax": 1.0,
             "deform_scale": 0.0,
             "display": DISPLAY_MESH,  # falls back to points when no mesh is attached
+            "bands": 0,               # 0 = smooth colors, n = n flat bands
         }
+        self.overlays = Overlays(MATERIAL_PATH, EMISSION_PRIMVAR, EMISSION_GAIN)
+        self.posts_applied = 0
+        self._pending_post = None
         self.views = {}
         self.frames_applied = 0
         self.on_geometry_built = None  # callback(list of prim paths)
@@ -327,6 +341,10 @@ class StageUpdater:
     def set_frame(self, header, arrays):
         self._pending_frame = (header, arrays)
 
+    def set_post(self, header, arrays):
+        """Derived geometry (``post`` message); applied on the next update tick."""
+        self._pending_post = (header, arrays)
+
     def restyle(self, **style):
         """Change colormap/range/deformation/display and re-apply the last frame."""
         self.style.update(style)
@@ -336,6 +354,7 @@ class StageUpdater:
 
     def clear(self):
         self._pending_geometry = None
+        self._pending_post = None
         self._pending_meshes = None
         self._pending_frame = None
         self._last_frame = None
@@ -344,6 +363,7 @@ class StageUpdater:
     def _remove_prims(self):
         self._generation += 1
         self.views.clear()
+        self.overlays.clear()
         stage = omni.usd.get_context().get_stage()
         if stage and stage.GetPrimAtPath(ROOT_PATH):
             stage.RemovePrim(ROOT_PATH)
@@ -364,7 +384,7 @@ class StageUpdater:
 
     def _on_update(self):
         if (self._pending_geometry is None and self._pending_meshes is None
-                and self._pending_frame is None and self._job is None):
+                and self._pending_frame is None and self._job is None and self._pending_post is None):
             return
         try:
             if self._pending_geometry is not None:
@@ -374,6 +394,10 @@ class StageUpdater:
                 arrays, self._pending_meshes = self._pending_meshes, None
                 self._attach_meshes(arrays)
             self._commit_finished_job()
+            if self._pending_post is not None and self.views:
+                (header, arrays), self._pending_post = self._pending_post, None
+                self.overlays.apply(omni.usd.get_context().get_stage(), self.views, header, arrays, self.style)
+                self.posts_applied += 1
             if self._pending_frame is not None and self.views and self._job is None:
                 frame, self._pending_frame = self._pending_frame, None
                 self._last_frame = frame

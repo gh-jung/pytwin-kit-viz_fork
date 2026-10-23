@@ -10,7 +10,7 @@ import omni.kit.app
 import omni.ui as ui
 
 from . import colormap
-from .stage_updater import DISPLAY_MESH, DISPLAY_POINTS
+from .stage_updater import DISPLAY_MESH, DISPLAY_NONE, DISPLAY_POINTS
 
 WINDOW_TITLE = "TwinViz Viewer"
 LABEL_W = 110
@@ -139,7 +139,7 @@ class TwinVizWindow:
             with ui.VStack(spacing=4, height=0):
                 with ui.HStack(height=22):
                     ui.Label("Show", width=LABEL_W, tooltip="Mesh needs a <model>.twinviz.json sidecar")
-                    displays = [DISPLAY_MESH, DISPLAY_POINTS]
+                    displays = [DISPLAY_MESH, DISPLAY_POINTS, DISPLAY_NONE]
                     show = ui.ComboBox(displays.index(style["display"]), *displays)
                     show.model.get_item_value_model().add_value_changed_fn(
                         lambda m: self._restyle(display=displays[m.as_int]))
@@ -164,6 +164,49 @@ class TwinVizWindow:
                     deform = ui.FloatDrag(min=0.0, step=1.0)
                     deform.model.add_value_changed_fn(lambda m: self._restyle(deform_scale=m.as_float))
                 self._range_label = ui.Label("", word_wrap=True)
+        self._build_contour_section()
+
+    def _build_contour_section(self):
+        post = self._session.post_settings
+        with ui.CollapsableFrame("Contours / Streamlines"):
+            with ui.VStack(spacing=4, height=0):
+                with ui.HStack(height=22):
+                    ui.Label("Levels", width=LABEL_W, tooltip="Number of contour levels (band edges / iso-lines)")
+                    self._levels = ui.IntDrag(min=1, max=50)
+                    self._levels.model.set_value(int(post["contours"]))
+                    self._levels.model.add_end_edit_fn(lambda m: self._on_levels(m.as_int))
+                with ui.HStack(height=22):
+                    ui.Label("Banded colors", width=LABEL_W)
+                    self._banded = ui.CheckBox()
+                    self._banded.model.add_value_changed_fn(lambda m: self._apply_bands())
+                with ui.HStack(height=22):
+                    ui.Label("Iso-lines", width=LABEL_W, tooltip="On the surface mesh (needs a mesh)")
+                    lines = ui.CheckBox()
+                    lines.model.set_value(bool(post["isolines"]))
+                    lines.model.add_value_changed_fn(lambda m: self._post(isolines=m.as_bool))
+                with ui.HStack(height=22):
+                    ui.Label("Isosurfaces", width=LABEL_W,
+                             tooltip="Number of isosurfaces (0 = off). Set Show to 'none' to see inside.")
+                    iso = ui.IntDrag(min=0, max=20)
+                    iso.model.set_value(int(post["isosurfaces"]))
+                    iso.model.add_end_edit_fn(lambda m: self._post(isosurfaces=m.as_int))
+                with ui.HStack(height=22):
+                    ui.Label("Streamlines", width=LABEL_W, tooltip="Seed count, vector fields only (0 = off)")
+                    stream = ui.IntDrag(min=0, max=2000, step=10)
+                    stream.model.set_value(int(post["streamlines"]))
+                    stream.model.add_end_edit_fn(lambda m: self._post(streamlines=m.as_int))
+
+    def _on_levels(self, n):
+        self._apply_bands()
+        self._post(contours=max(int(n), 1))
+
+    def _apply_bands(self):
+        # n levels split the range into n + 1 bands, matching the worker's iso-lines.
+        bands = self._levels.model.as_int + 1 if self._banded.model.as_bool else 0
+        self._session.updater.restyle(bands=bands)
+
+    def _post(self, **settings):
+        self._run(self._session.set_post(**settings), queue=True)
 
     def _build_log_section(self):
         with ui.CollapsableFrame("Worker log", collapsed=True):
@@ -182,13 +225,16 @@ class TwinVizWindow:
 
     # ---- actions ----------------------------------------------------------------
 
-    def _run(self, coro):
-        if self._busy:
+    def _run(self, coro, queue=False):
+        """Run an action; ``queue`` = run even while another action is busy (quick sends)."""
+        if self._busy and not queue:
             coro.close()
             return
 
         async def guarded():
-            self._busy = True
+            owns_busy = not queue
+            if owns_busy:
+                self._busy = True
             try:
                 await coro
                 self._error_label.text = ""
@@ -196,7 +242,8 @@ class TwinVizWindow:
                 carb.log_error(f"[twinviz.viewer] {exc}")
                 self._error_label.text = str(exc)
             finally:
-                self._busy = False
+                if owns_busy:
+                    self._busy = False
                 self._refresh_status()
 
         asyncio.ensure_future(guarded())
@@ -220,7 +267,12 @@ class TwinVizWindow:
     def _restyle(self, **style):
         if style.get("vmin") is not None or style.get("vmax") is not None:
             style["auto_range"] = False
-        self._session.updater.restyle(**style)
+        updater = self._session.updater
+        updater.restyle(**style)
+        if {"auto_range", "vmin", "vmax"} & set(style):
+            # Contour levels follow the color range.
+            s = updater.style
+            self._post(range=None if s["auto_range"] else [s["vmin"], s["vmax"]])
 
     def _frame_prims(self, paths):
         try:

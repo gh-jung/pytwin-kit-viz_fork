@@ -23,6 +23,7 @@ import numpy as np
 from . import protocol as P
 from .decimate import SHRINK, SLICE, sample_indices, shrink_tbrom
 from .mesh import build_meshes, read_sidecar
+from .post import Domain, PostWorker
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class TwinRunner:
         self._realtime = True
         self._speed = 1.0
         self._next_wall = 0.0
+        self._post = PostWorker(emit, P.pack_arrays)
         self._sel = {}      # rom -> sampled point indices to slice out of full fields
         self._shown = {}    # rom -> (full point count, shown point count, SHRINK | SLICE | None)
 
@@ -76,6 +78,7 @@ class TwinRunner:
     def close(self):
         self._commands.put({"type": "_quit"})
         self._thread.join(timeout=10)
+        self._post.close()
 
     # ---- runner thread ---------------------------------------------------
 
@@ -136,6 +139,8 @@ class TwinRunner:
             if self._mode == MODE_STATIC:
                 # Static fields only change on re-initialization.
                 self._initialize()
+        elif t == P.MSG_SET_POST:
+            self._post.configure(cmd.get("settings") or {})
         elif t == P.MSG_STOP:
             self._running = False
             self._initialize()
@@ -180,7 +185,9 @@ class TwinRunner:
             tolerance_factor = sidecar_factor
         self._emit(self._model_info(path))
         points = self._emit_geometry()
-        self._emit_meshes(mesh_paths, tolerance_factor, points)
+        domains = self._emit_meshes(mesh_paths, tolerance_factor, points)
+        # Meshless TBROMs get a voxel-grid domain (built when first needed).
+        self._post.set_domains({rom: domains.get(rom) or Domain(pts) for rom, pts in points.items()})
         self._initialize()
 
     def _limit_points(self, max_points):
@@ -218,6 +225,7 @@ class TwinRunner:
 
     def _unload(self):
         self._running = False
+        self._post.set_domains({})
         if self._tm is not None:
             try:
                 self._tm.close()
@@ -288,20 +296,21 @@ class TwinRunner:
         return arrays
 
     def _emit_meshes(self, mesh_paths, tolerance_factor, points):
-        """Send surface meshes mapped onto TBROM points (``{rom or "*": path}``)."""
+        """Send surface meshes mapped onto TBROM points (``{rom or "*": path}``); returns post domains."""
         if not mesh_paths:
-            return
+            return {}
         locations = {rom: self._tm.get_tbrom_data_location(rom) for rom in self._tm.tbrom_names}
         try:
-            arrays, stats = build_meshes(mesh_paths, points, locations, tolerance_factor)
+            arrays, stats, domains = build_meshes(mesh_paths, points, locations, tolerance_factor)
         except Exception as exc:
             # A broken mesh should not prevent showing the point cloud.
             log.exception("mesh mapping failed")
             self._emit({"type": P.MSG_ERROR, "message": f"mesh: {type(exc).__name__}: {exc}"})
-            return
+            return {}
         if arrays:
             meta, payload = P.pack_arrays(arrays)
             self._emit({"type": P.MSG_MESH_MAP, "stats": stats, "arrays": meta}, payload)
+        return domains
 
     def _snapshot(self, rom):
         tm = self._tm
@@ -329,6 +338,7 @@ class TwinRunner:
             "arrays": meta,
         }
         self._emit(header, payload, latest_only=True)
+        self._post.submit(header["t"], self._step, arrays)
 
     def _emit_state(self):
         self._emit({"type": P.MSG_STATE, "running": self._running, "mode": self._mode})

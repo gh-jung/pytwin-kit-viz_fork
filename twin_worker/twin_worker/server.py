@@ -12,7 +12,8 @@ from .runner import TwinRunner
 log = logging.getLogger(__name__)
 
 # Commands forwarded to the runner thread.
-RUNNER_COMMANDS = {P.MSG_LOAD, P.MSG_INIT, P.MSG_START, P.MSG_PAUSE, P.MSG_SET_INPUTS, P.MSG_STOP}
+RUNNER_COMMANDS = {P.MSG_LOAD, P.MSG_INIT, P.MSG_START, P.MSG_PAUSE, P.MSG_SET_INPUTS, P.MSG_STOP,
+                   P.MSG_SET_POST}
 # Messages replayed to a client that connects after a model was loaded.
 REPLAYED = (P.MSG_MODEL_INFO, P.MSG_GEOMETRY, P.MSG_MESH_MAP)
 
@@ -28,7 +29,7 @@ class WorkerServer:
 
         # Outgoing messages: reliable ones are queued in order, frames keep only the latest.
         self._outbox = collections.deque()
-        self._latest_frame = None
+        self._latest = {}  # msg type -> newest (header, payload) for LATEST_ONLY types
         self._wakeup = asyncio.Event()
         self._sender_task = None
         self._replay = {}
@@ -66,9 +67,9 @@ class WorkerServer:
         if self._client is None:
             return
         if latest_only:
-            if self._latest_frame is not None:
+            if header["type"] in self._latest:
                 self.frames_dropped += 1
-            self._latest_frame = (header, payload)
+            self._latest[header["type"]] = (header, payload)
         else:
             self._outbox.append((header, payload))
         self._wakeup.set()
@@ -79,9 +80,9 @@ class WorkerServer:
             self._wakeup.clear()
             while self._outbox:
                 await P.write_message(writer, *self._outbox.popleft())
-            if self._latest_frame is not None:
-                frame, self._latest_frame = self._latest_frame, None
-                await P.write_message(writer, *frame)
+            while self._latest:
+                _, message = self._latest.popitem()
+                await P.write_message(writer, *message)
 
     # ---- incoming ----------------------------------------------------------
 
@@ -101,7 +102,7 @@ class WorkerServer:
                 "pid": os.getpid(),
             })
             self._outbox.clear()
-            self._latest_frame = None
+            self._latest = {}  # msg type -> newest (header, payload) for LATEST_ONLY types
             for msg_type in REPLAYED:
                 if msg_type in self._replay:
                     self._outbox.append(self._replay[msg_type])

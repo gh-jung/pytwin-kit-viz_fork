@@ -61,7 +61,7 @@ def load_mesh(path):
 
 
 def surface_mapping(mesh, tbrom_points, tolerance_factor=TOLERANCE_FACTOR["nodal"]):
-    """Return ``(points f32 (V,3), faces i32 (F,3), index i32 (V,), stats)``."""
+    """Return ``(points f32 (V,3), faces i32 (F,3), index i32 (V,), stats, surface PolyData)``."""
     from scipy.spatial import cKDTree
 
     surf = mesh.extract_surface(algorithm="dataset_surface").triangulate()
@@ -90,17 +90,22 @@ def surface_mapping(mesh, tbrom_points, tolerance_factor=TOLERANCE_FACTOR["nodal
         "max_distance": float(dist[~unmapped].max()) if (~unmapped).any() else None,
         "tolerance": tolerance,
     }
-    return points, faces, index, stats
+    return points, faces, index, stats, surf
 
 
 def build_meshes(mesh_paths, tbrom_points, locations=None, tolerance_factor=None):
-    """``{rom: mesh path}`` (``"*"`` = all) and ``{rom: points}`` -> arrays and stats per ROM.
+    """``{rom: mesh path}`` (``"*"`` = all) and ``{rom: points}`` -> (arrays, stats, domains).
+
+    ``domains`` holds a post-processing :class:`~twin_worker.post.Domain` per ROM.
 
     ``locations`` maps ROM -> TBROM data location ("Nodal"/"elemental") to pick the
     default tolerance; ``tolerance_factor`` overrides it for every ROM.
     """
+    from .post import Domain
+
     arrays = {}
     stats = {}
+    domains = {}
     cache = {}
     for rom, pts in tbrom_points.items():
         path = mesh_paths.get(rom) or mesh_paths.get("*")
@@ -113,10 +118,11 @@ def build_meshes(mesh_paths, tbrom_points, locations=None, tolerance_factor=None
         if factor is None:
             location = str((locations or {}).get(rom, "nodal")).lower()
             factor = TOLERANCE_FACTOR.get(location, TOLERANCE_FACTOR["nodal"])
-        points, faces, index, st = surface_mapping(cache[path], pts, factor)
+        points, faces, index, st, surf = surface_mapping(cache[path], pts, factor)
         arrays[f"{rom}/points"] = points
         arrays[f"{rom}/faces"] = faces
         arrays[f"{rom}/index"] = index
         stats[rom] = {"path": path, **st}
+        domains[rom] = Domain.from_mesh(pts, cache[path], surf, index, st["tolerance"])
         log.info("mesh for %s: %s", rom, stats[rom])
-    return arrays, stats
+    return arrays, stats, domains

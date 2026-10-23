@@ -33,6 +33,9 @@ class TwinSession:
         self.fps = 0.0
         self.on_changed = None        # callback(what: str); what in {"connection", "model", "mesh", "frame", "state", "error"}
         self.restarts = 0             # automatic restarts since the last user action
+        # Worker post-processing (see twin_worker/post.py); re-sent after every load.
+        self.post_settings = {"contours": 9, "isolines": False, "isosurfaces": 0, "streamlines": 0,
+                              "range": None}
         self.recovering = False
 
         # What to restore after a worker crash.
@@ -51,6 +54,7 @@ class TwinSession:
         c.on(P.MSG_MODEL_INFO, self._on_model_info)
         c.on(P.MSG_GEOMETRY, self._on_geometry)
         c.on(P.MSG_MESH_MAP, self._on_mesh_map)
+        c.on(P.MSG_POST, self._on_post)
         c.on(P.MSG_FRAME, self._on_frame)
         c.on(P.MSG_STATE, self._on_state)
         c.on(P.MSG_ERROR, self._on_error)
@@ -122,6 +126,7 @@ class TwinSession:
         if meshes:
             msg["meshes"] = {k: str(v) for k, v in meshes.items()}
         await self.client.send(msg)
+        await self.client.send({"type": P.MSG_SET_POST, "settings": self.post_settings})
 
     async def start(self, step_size, realtime=True, speed=1.0):
         self._run_args = (step_size, realtime, speed)
@@ -182,6 +187,12 @@ class TwinSession:
         finally:
             self.recovering = False
 
+    async def set_post(self, **settings):
+        """Change contours/isosurfaces/streamlines; sent now if connected, else on the next load."""
+        self.post_settings.update(settings)
+        if self.client.connected:
+            await self.client.send({"type": P.MSG_SET_POST, "settings": settings})
+
     def set_input(self, name, value):
         """Coalesce rapid slider changes into throttled ``set_inputs`` messages."""
         self._pending_inputs[name] = float(value)
@@ -217,6 +228,9 @@ class TwinSession:
         self.mesh_stats = header.get("stats", {})
         self.updater.set_meshes(arrays)
         self._notify("mesh")
+
+    def _on_post(self, header, arrays):
+        self.updater.set_post(header, arrays)
 
     def _on_frame(self, header, arrays):
         self.updater.set_frame(header, arrays)

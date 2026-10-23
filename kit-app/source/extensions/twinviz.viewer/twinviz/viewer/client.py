@@ -32,7 +32,7 @@ class TwinClient:
         self._send_lock = threading.Lock()
         self._lock = threading.Lock()
         self._inbox = collections.deque()  # (header, arrays) in arrival order, except frames
-        self._latest_frame = None
+        self._latest = {}   # msg type -> newest (header, arrays) for P.LATEST_ONLY types
         self._seq = itertools.count()
         self._pending_pings = {}
         self._handlers = {}
@@ -130,7 +130,7 @@ class TwinClient:
         self._pending_pings.clear()
         with self._lock:
             self._inbox.clear()
-            self._latest_frame = None
+            self._latest.clear()
         if notify:
             handler = self._handlers.get("disconnected")
             if handler is not None:
@@ -144,10 +144,10 @@ class TwinClient:
                 header, payload = P.recv_message(sock)
                 arrays = P.unpack_arrays(header["arrays"], payload, np) if "arrays" in header else {}
                 with self._lock:
-                    if header["type"] == P.MSG_FRAME:
-                        if self._latest_frame is not None:
+                    if header["type"] in P.LATEST_ONLY:
+                        if header["type"] in self._latest:
                             self.frames_dropped += 1
-                        self._latest_frame = (header, arrays)
+                        self._latest[header["type"]] = (header, arrays)
                     else:
                         self._inbox.append((header, arrays))
         except (OSError, ConnectionError, P.ProtocolError) as exc:
@@ -164,20 +164,20 @@ class TwinClient:
 
     def pump(self):
         """Dispatch received messages on the main thread (called every app update)."""
-        if not self._inbox and self._latest_frame is None:
+        if not self._inbox and not self._latest:
             return
         with self._lock:
             messages = list(self._inbox)
             self._inbox.clear()
-            frame, self._latest_frame = self._latest_frame, None
+            latest, self._latest = self._latest, {}
         for header, arrays in messages:
             if header["type"] == "_eof":
                 if self._sock is not None:
                     self._close_socket(notify=True)
                 return
             self._dispatch(header, arrays)
-        if frame is not None:
-            self._dispatch(*frame)
+        for message in latest.values():
+            self._dispatch(*message)
 
     def _dispatch(self, header, arrays):
         msg_type = header["type"]

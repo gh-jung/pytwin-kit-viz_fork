@@ -56,17 +56,26 @@ def scalarize(values):
     return values
 
 
-def apply(scalars, vmin, vmax, name="turbo", linear=True):
+def apply(scalars, vmin, vmax, name="turbo", linear=True, bands=0):
     """(N,) scalars -> (N, 3) float32 RGB in [0, 1].
 
     The maps are defined in sRGB; ``linear=True`` (default) returns linear values,
-    which is what USD ``displayColor`` and RTX expect.
+    which is what USD ``displayColor`` and RTX expect. ``bands`` > 1 gives that many
+    flat color bands (band edges match the worker's iso-line levels).
     """
     lut = _lut(name, linear)
     span = vmax - vmin
     if not np.isfinite(span) or span <= 0:
         return np.take(lut, np.zeros(np.shape(scalars), dtype=np.intp), axis=0)
     t = np.subtract(scalars, np.float32(vmin), dtype=np.float32)
+    if bands and bands > 1:
+        # Band k covers [k, k+1) * span / bands; color it with the LUT entry at its centre.
+        t *= np.float32(bands / span)
+        np.nan_to_num(t, copy=False, nan=0.0, posinf=bands - 1, neginf=0.0)
+        np.clip(np.floor(t, out=t), 0, bands - 1, out=t)
+        t += np.float32(0.5)
+        t *= np.float32((_LUT_SIZE - 1) / bands)
+        return np.take(lut, t.astype(np.intp), axis=0)
     t *= np.float32((_LUT_SIZE - 1) / span)
     np.nan_to_num(t, copy=False, nan=0.0, posinf=_LUT_SIZE - 1, neginf=0.0)
     np.clip(t, 0, _LUT_SIZE - 1, out=t)

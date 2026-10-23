@@ -31,6 +31,7 @@ MSG_PAUSE = "pause"
 MSG_SET_INPUTS = "set_inputs"
 MSG_STOP = "stop"
 MSG_SHUTDOWN = "shutdown"
+MSG_SET_POST = "set_post"   # contours / isosurfaces / streamlines settings
 
 # worker -> Kit
 MSG_HELLO = "hello"
@@ -40,6 +41,10 @@ MSG_GEOMETRY = "geometry"
 MSG_MESH_MAP = "mesh_map"
 MSG_FRAME = "frame"
 MSG_STATE = "state"
+MSG_POST = "post"           # derived geometry for the newest frame
+
+# Messages where only the newest one matters; older ones may be dropped.
+LATEST_ONLY = frozenset({MSG_FRAME, MSG_POST})
 MSG_ERROR = "error"
 MSG_LOG = "log"
 

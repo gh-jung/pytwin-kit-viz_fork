@@ -158,5 +158,67 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         self.assertTrue(omni.usd.get_context().get_stage().GetPrimAtPath(ROOT_PATH))
 
 
+class TestContours(omni.kit.test.AsyncTestCase):
+    """Bands, iso-lines, isosurfaces and streamlines end up as USD prims."""
+
+    async def setUp(self):
+        await omni.usd.get_context().new_stage_async()
+        ext_id = omni.kit.app.get_app().get_extension_manager().get_enabled_extension_id("twinviz.viewer")
+        python_exe, worker_root = _resolve_worker_paths(ext_id)
+        self.models = worker_root.parent / "models"
+        self.session = TwinSession(python_exe, worker_root)
+
+    async def tearDown(self):
+        await self.session.stop_worker()
+        self.session.destroy()
+
+    async def _load(self, name, mesh):
+        if not (self.models / name).is_file() or not (self.models / mesh).is_file():
+            self.skipTest(f"missing {name} or {mesh}")
+        await self.session.load(self.models / name)
+        u = self.session.updater
+        await wait_until(lambda: u.views and u.frames_applied > 0 and next(iter(u.views.values())).mesh_layer)
+        return next(iter(u.views.values()))
+
+    async def _wait_overlay(self, kinds, timeout=60.0):
+        u = self.session.updater
+        await wait_until(lambda: {i["kind"] for i in u.overlays.last_items} >= set(kinds), timeout)
+        stage = omni.usd.get_context().get_stage()
+        return {kind: stage.GetPrimAtPath(path) for (rom, kind), path in u.overlays.paths.items()}
+
+    async def test_bands_isolines_isosurfaces(self):
+        view = await self._load("ThermalTBROM_23R2.twin", "ThermalTBROM.dat")
+        u = self.session.updater
+        u.restyle(bands=6)
+        await wait_until(lambda: u.settled)
+        colors = colors_of(self.session, view, mesh=True)
+        self.assertLessEqual(len(np.unique(np.round(colors, 5), axis=0)), 6 + 1)  # + unmapped gray
+
+        await self.session.set_post(isolines=True, contours=5, isosurfaces=2)
+        prims = await self._wait_overlay(["isolines", "isosurfaces"])
+        curves = UsdGeom.BasisCurves(prims["isolines"])
+        self.assertGreater(len(curves.GetCurveVertexCountsAttr().Get()), 0)
+        self.assertEqual(sum(curves.GetCurveVertexCountsAttr().Get()), len(curves.GetPointsAttr().Get()))
+        mesh = UsdGeom.Mesh(prims["isosurfaces"])
+        self.assertGreater(len(mesh.GetFaceVertexCountsAttr().Get()), 100)
+
+        # Turning a kind off removes its prim.
+        await self.session.set_post(isolines=False)
+        await wait_until(lambda: "isolines" not in {i["kind"] for i in u.overlays.last_items})
+        self.assertFalse(omni.usd.get_context().get_stage().GetPrimAtPath(f"{view.path}_isolines"))
+
+    async def test_streamlines(self):
+        await self._load("FEADeformationTBROM_23R2.twin", "FEA_deformation.rst")
+        self.session.set_input("Force_X_Component", 5.0)
+        await self.session.start(step_size=0.05, realtime=False)
+        await wait_until(lambda: self.session.last_frame["step"] > 3)
+        await self.session.pause()
+        await self.session.set_post(streamlines=40)
+        prims = await self._wait_overlay(["streamlines"])
+        curves = UsdGeom.BasisCurves(prims["streamlines"])
+        self.assertGreater(len(curves.GetCurveVertexCountsAttr().Get()), 5)
+        self.assertTrue(min(curves.GetCurveVertexCountsAttr().Get()) >= 2)
+
+
 class TestViewerUsdBackend(TestViewer):
     backend = "usd"

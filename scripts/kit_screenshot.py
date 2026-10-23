@@ -11,6 +11,9 @@ Settings (pass as --/twinviz/shot/<key>=<value>):
     settle  seconds to let the renderer settle    (default 20)
     viewport  viewport render resolution "WxH"    (default 1280x720)
     realtime  0 = step as fast as possible while running (default 1)
+    display mesh | points | none                  (default: extension default)
+    bands   number of flat color bands, 0 = smooth (default 0)
+    post    worker post-processing "key:value,..." e.g. "isolines:1,contours:7,isosurfaces:2,streamlines:200"
     report  1 = also print one short "K<n> ..." result line (see REPORT_LEGEND)
     out     output PNG path                       (default _screenshots/<model>.png)
 
@@ -147,6 +150,18 @@ async def main():
                 session.last_frame["inputs"].get(k) == float(v) for k, v in inputs.items()))
         if deform:
             session.updater.restyle(deform_scale=deform)
+        display = str(setting("display", ""))
+        if display:
+            session.updater.restyle(display=display)
+        bands = int(setting("bands", 0))
+        if bands:
+            session.updater.restyle(bands=bands)
+        post = {k: (bool(int(v)) if k == "isolines" else int(v))
+                for k, v in (kv.split(":") for kv in str(setting("post", "")).split(",") if kv)}
+        if post:
+            await session.set_post(**post)
+            wanted = {k for k in ("isolines", "isosurfaces", "streamlines") if post.get(k)}
+            await wait_until(lambda: wanted <= {i["kind"] for i in session.updater.overlays.last_items})
         run_fps = None
         if run_s and session.mode == "dynamic":
             await session.start(step_size=0.05, realtime=realtime)
