@@ -17,7 +17,9 @@ inventing values there.
 slowed down; it always works on the newest frame and drops older ones.
 """
 
+import concurrent.futures
 import logging
+import os
 import threading
 import time
 
@@ -28,6 +30,15 @@ log = logging.getLogger(__name__)
 VOXEL_BUDGET = 96 ** 3      # max grid nodes when no mesh is available
 MIN_INTERVAL_S = 0.1        # at most ~10 post updates per second
 STREAM_MAX_STEPS = 2000
+# VTK releases the GIL while tracing, so seeds are split across threads.
+STREAM_THREADS = max(1, min(8, (os.cpu_count() or 2) // 2))
+# "fast": fixed-step RK4, one cell per step (~6x faster, ~3x fewer points; the field is
+# itself interpolated from the TBROM points, so finer steps add little).
+# "accurate": adaptive RK45 with a tight error bound.
+STREAM_QUALITY = {
+    "fast": dict(integrator_type=4, initial_step_length=1.0),
+    "accurate": dict(integrator_type=45, initial_step_length=0.2, max_error=1e-6),
+}
 
 # VTK cell types with a volume (linear and quadratic tets, hexes, wedges, pyramids, ...).
 VOLUME_CELL_TYPES = {10, 11, 12, 13, 14, 15, 16, 24, 25, 26, 27, 29, 32, 33, 42}
@@ -201,7 +212,7 @@ class Domain:
             return centers[nearest[rng.choice(len(nearest), size=min(count, len(nearest)), replace=False)]]
         return centers[rng.choice(len(centers), size=min(count, len(centers)), replace=False)]
 
-    def streamlines(self, vectors, seeds, source=None):
+    def streamlines(self, vectors, seeds, source=None, quality="fast"):
         vectors = np.asarray(vectors, dtype=np.float32)
         if vectors.ndim != 2 or vectors.shape[1] != 3 or seeds <= 0:
             return None
@@ -212,20 +223,32 @@ class Domain:
         index = self._stream_index if grid is getattr(self, "_stream_volume", None) else self.volume_index
         if grid.n_points == 0:
             return _empty_curves()
-        vol = grid.copy(deep=False)
-        vol.point_data["v"] = _gather(vectors, index, fill=0.0)
+        velocity = _gather(vectors, index, fill=0.0)
         # Seed at cell centres: always inside the volume (TBROM points often lie on its boundary,
         # where the tracer cannot locate a starting cell).
         seed_pts = self._seeds(seeds, source)
-        lines = vol.streamlines_from_source(
-            pv.PolyData(seed_pts), vectors="v", integration_direction="both",
-            initial_step_length=0.2, step_unit="cl", max_steps=STREAM_MAX_STEPS,
-            max_length=2.0 * self._diag, terminal_speed=1e-12, compute_vorticity=False)
-        if lines.n_points == 0:
-            return _empty_curves()
-        speed = np.linalg.norm(np.asarray(lines.point_data["v"], dtype=np.float32), axis=1)
-        lines.point_data["speed"] = speed
-        return _polylines(lines, "speed")
+        options = dict(STREAM_QUALITY.get(quality, STREAM_QUALITY["fast"]))
+
+        def trace(chunk):
+            # Each thread gets its own shallow copy: cell locators are cached per dataset object.
+            vol = grid.copy(deep=False)
+            vol.point_data["v"] = velocity
+            lines = vol.streamlines_from_source(
+                pv.PolyData(chunk), vectors="v", integration_direction="both", step_unit="cl",
+                max_steps=STREAM_MAX_STEPS, max_length=2.0 * self._diag, terminal_speed=1e-12,
+                compute_vorticity=False, **options)
+            if lines.n_points == 0:
+                return _empty_curves()
+            lines.point_data["speed"] = np.linalg.norm(np.asarray(lines.point_data["v"], dtype=np.float32), axis=1)
+            return _polylines(lines, "speed")
+
+        chunks = [c for c in np.array_split(seed_pts, min(STREAM_THREADS, len(seed_pts))) if len(c)]
+        if len(chunks) <= 1:
+            return trace(seed_pts)
+        if getattr(self, "_pool", None) is None:
+            self._pool = concurrent.futures.ThreadPoolExecutor(STREAM_THREADS, thread_name_prefix="twin-stream")
+        parts = list(self._pool.map(trace, chunks))
+        return {key: np.concatenate([p[key] for p in parts]) for key in ("points", "counts", "scalars")}
 
 
 def _inside_only(volume, index):
@@ -307,7 +330,8 @@ class PostWorker:
 
     def configure(self, settings):
         """``{"contours": n, "isolines": bool, "isosurfaces": n | [levels], "streamlines": seeds,
-        "seed": named selection | None, "range": [vmin, vmax] | None}`` (missing keys keep their value)."""
+        "seed": named selection | None, "stream_quality": "fast" | "accurate",
+        "range": [vmin, vmax] | None}`` (missing keys keep their value)."""
         with self._cond:
             self._settings.update(settings)
             if self._last is not None:
@@ -351,6 +375,7 @@ class PostWorker:
             t0 = time.perf_counter()
             try:
                 self._compute(frame, domains, settings)
+                log.info("post update in %.0f ms", (time.perf_counter() - t0) * 1000)
             except Exception:
                 log.exception("post-processing failed")
             next_ok = t0 + max(MIN_INTERVAL_S, time.perf_counter() - t0)
@@ -373,7 +398,8 @@ class PostWorker:
                 levels = list(iso) if isinstance(iso, (list, tuple)) else contour_levels(vmin, vmax, int(iso))
                 outputs[ISOSURFACES] = dom.isosurfaces(scalars, levels)
             if settings.get("streamlines"):
-                outputs[STREAMLINES] = dom.streamlines(values, int(settings["streamlines"]), settings.get("seed"))
+                outputs[STREAMLINES] = dom.streamlines(values, int(settings["streamlines"]), settings.get("seed"),
+                                                       settings.get("stream_quality", "fast"))
             for kind, out in outputs.items():
                 if out is None:
                     continue

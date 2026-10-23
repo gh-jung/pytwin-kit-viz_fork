@@ -94,6 +94,9 @@ works/
 - kit-app-template 110 브랜치 구조 및 Kit 내장 Python 버전 확인
 
 ## 진행 기록
+- 스트림라인 속도(`scripts/kit_stream_bench.py`, HX 시드 300개): 병목은 워커 추적(Kit 기록 6~24 ms, 렌더 틱 영향 없음).
+  고정 간격 RK4(1셀) 기본 + 시드를 최대 8스레드로 분할(VTK가 GIL 해제) → 갱신 450 ms → 50 ms, 점 수 1/3,
+  실행 중 갱신 2.2 → 10회/s(후처리 상한). 정밀 적분은 Tracing: accurate.
 - 컨투어/등치면/스트림라인 (워커 `post.py` 후처리 스레드, 최신 프레임만, 최대 10회/s):
   - 영역(Domain): 소스 메쉬(솔리드) 또는 복셀 격자(메쉬 없음·쉘 메쉬, 최대 96³ 노드). 데이터 밖 셀은 1회 잘라냄.
   - 밴드 색(Kit 컬러맵, 경계 = 등치선 레벨), 표면 등치선(VTK contour → BasisCurves), 등치면(→ Mesh, Show: none),

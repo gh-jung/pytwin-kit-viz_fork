@@ -198,6 +198,13 @@ class TwinVizWindow:
                 with ui.HStack(height=22):
                     ui.Label("Seed from", width=LABEL_W, tooltip="Anywhere, or a named selection such as an inlet")
                     self._seed_frame = ui.Frame(build_fn=self._build_seed_combo)
+                with ui.HStack(height=22):
+                    ui.Label("Tracing", width=LABEL_W,
+                             tooltip="fast: fixed one-cell RK4 steps (default); accurate: adaptive RK45, ~6x slower")
+                    qualities = ["fast", "accurate"]
+                    quality = ui.ComboBox(qualities.index(post.get("stream_quality", "fast")), *qualities)
+                    quality.model.get_item_value_model().add_value_changed_fn(
+                        lambda m: self._post(stream_quality=qualities[m.as_int]))
 
     def _build_seed_combo(self):
         info = self._session.model_info
