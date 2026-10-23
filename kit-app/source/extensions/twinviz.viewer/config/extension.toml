@@ -38,6 +38,8 @@ exts."twinviz.viewer".models_dir = ""
 exts."twinviz.viewer".model_units_in_meters = 1.0
 # Per-frame writes: "fabric" (USDRT, fast; USD layer keeps the initial values) or "usd".
 exts."twinviz.viewer".write_backend = "fabric"
+# true = let omni.kit.debug.python attach its debugger to the worker (much slower; for debugging only).
+exts."twinviz.viewer".debug_worker = false
 
 
 [[python.module]]  # Main python module this extension provides, it will be publicly available as "import twinviz.viewer"

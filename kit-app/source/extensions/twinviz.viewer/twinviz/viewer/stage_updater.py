@@ -177,7 +177,11 @@ class _Layer:
 
 
 class FieldView:
-    """Prims for one TBROM: always a ``UsdGeom.Points`` cloud, optionally a mapped mesh."""
+    """Prims for one TBROM: a ``UsdGeom.Points`` cloud and/or a mapped mesh.
+
+    Each prim is authored only when it is first shown: for a large model with a
+    mesh, building the unused point cloud doubled the load hitch.
+    """
 
     def __init__(self, stage, rom, points, backend):
         self.rom = rom
@@ -187,9 +191,15 @@ class FieldView:
         self.mesh_path = None
         self.range = (0.0, 0.0)
         self.is_vector = False
+        self._stage = stage
+        self._base_points = np.ascontiguousarray(points, dtype=np.float32)
+        self.points_layer = None
+        self.mesh_layer = None
 
+    def _create_points_layer(self):
+        stage = self._stage
         geom = UsdGeom.Points.Define(stage, self.path)
-        base = np.ascontiguousarray(points, dtype=np.float32)
+        base = self._base_points
         geom.CreatePointsAttr().Set(Vt.Vec3fArray.FromNumpy(base))
         geom.CreateExtentAttr().Set(_extent(base))
         diag = float(np.linalg.norm(base.max(axis=0) - base.min(axis=0))) or 1.0
@@ -197,12 +207,11 @@ class FieldView:
         geom.CreateWidthsAttr().Set(Vt.FloatArray([width]))
         geom.SetWidthsInterpolation(UsdGeom.Tokens.constant)
         _bind(geom.GetPrim(), UsdShade.Material.Get(stage, MATERIAL_PATH))
-        self.points_layer = _Layer(geom, base, backend)
-        self.mesh_layer = None
+        self.points_layer = _Layer(geom, base, self.backend)
 
     @property
     def base_points(self):
-        return self.points_layer.base_points
+        return self._base_points
 
     def attach_mesh(self, stage, points, faces, index):
         self.mesh_path = Sdf.Path(f"{self.path}_mesh")
@@ -222,11 +231,16 @@ class FieldView:
         use_mesh = display == DISPLAY_MESH and self.mesh_layer is not None
         return self.mesh_layer if use_mesh else self.points_layer
 
+    def ensure_layer(self, display):
+        """Author the prim ``display`` needs (main thread only)."""
+        if self.active_layer(display) is None:
+            self._create_points_layer()
+
     def set_display(self, display):
         active = self.active_layer(display)
-        self.points_layer.set_visible(active is self.points_layer)
-        if self.mesh_layer is not None:
-            self.mesh_layer.set_visible(active is self.mesh_layer)
+        for layer in (self.points_layer, self.mesh_layer):
+            if layer is not None:
+                layer.set_visible(layer is active)
         return active
 
     def prepare(self, values, style):
@@ -283,6 +297,7 @@ class StageUpdater:
         self.style_version = 0          # bumped by restyle()
         self.applied_style_version = 0  # style of the last committed frame
         self._generation = 0      # bumped when prims are rebuilt; stale jobs are dropped
+        self._frame_on_commit = False
         self._sub = carb.eventdispatcher.get_eventdispatcher().observe_event(
             event_name=omni.kit.app.GLOBAL_EVENT_UPDATE,
             observer_name="twinviz.viewer.StageUpdater",
@@ -343,6 +358,8 @@ class StageUpdater:
         """Read back a per-vertex array as rendered (Fabric or USD); for tests and tools."""
         view = self.views[rom]
         layer = view.mesh_layer if mesh else view.points_layer
+        if layer is None:
+            raise LookupError(f"{rom}: {'mesh' if mesh else 'points'} prim not created (never shown)")
         return layer.writer.get(name)
 
     def _on_update(self):
@@ -370,6 +387,8 @@ class StageUpdater:
         _, arrays = frame
         style = dict(self.style)
         views = dict(self.views)
+        for view in views.values():
+            view.ensure_layer(style["display"])
 
         def prepare():
             return {rom: views[rom].prepare(values, style)
@@ -391,6 +410,10 @@ class StageUpdater:
                     self.views[rom].commit(prepared, display)
         self.frames_applied += 1
         self.applied_style_version = style_version
+        if self._frame_on_commit and self.on_geometry_built is not None:
+            # Prims exist only after the first commit (they are created on demand).
+            self._frame_on_commit = False
+            self.on_geometry_built([ROOT_PATH])
 
     def _build(self, arrays):
         stage = omni.usd.get_context().get_stage()
@@ -406,8 +429,7 @@ class StageUpdater:
         _define_field_material(stage)
         for rom, points in arrays.items():
             self.views[rom] = FieldView(stage, rom, points, self.backend)
-        if self.on_geometry_built is not None:
-            self.on_geometry_built([str(v.path) for v in self.views.values()])
+        self._frame_on_commit = True
 
     def _attach_meshes(self, arrays):
         stage = omni.usd.get_context().get_stage()

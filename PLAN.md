@@ -94,6 +94,14 @@ works/
 - kit-app-template 110 브랜치 구조 및 Kit 내장 Python 버전 확인
 
 ## 진행 기록
+- 대형 모델 버벅임 대응 (`scripts/fake_worker.py` + `scripts/kit_load_bench.py`, 100만 점 벡터장 + 메쉬 200만 삼각형, 30 fps 송신):
+  - 원인 1: 수신을 Kit asyncio 루프(앱 업데이트당 1회 실행)에서 하여 12 MB 프레임이 여러 틱에 걸쳐 읽힘
+    → 전용 수신 스레드(블로킹 소켓 `recv_into`, 배열 변환까지 스레드에서), 메인 스레드는 틱마다 최신 프레임만 처리.
+    실행 중 틱 p50 47→8.6 ms, p95 156→20 ms, 50 ms 초과 멈춤 56/120→1/610틱. 열 모델 입력→프레임 1,266→597 ms.
+  - 원인 2: 앱의 `omni.kit.debug.python`(developer bundle)이 자식 Python에 pydevd를 주입 → 워커가 디버거 아래 실행.
+    워커 실행 시 원래 `CreateProcess` 사용(`without_debugger_hooks`), 필요 시 `debug_worker = true`. 로드 5.2→2.1 s.
+  - 원인 3: 메쉬가 있어도 안 보이는 100만 점 클라우드 프림을 생성 → 보일 때만 생성. 로드 시 `_build` 177→10 ms, 최대 틱 186→135 ms.
+  - 남은 로드 비용: 메쉬 프림 생성 ~120 ms(1회), RTX 초기 업로드.
 - M4: 성능/운영.
   - 프레임 반영을 준비(백그라운드 스레드: 컬러맵·변형, numpy)와 커밋(메인 스레드)으로 분리, 커밋은 USDRT로
     Fabric에 직접 기록(`write_backend = "fabric"`, `"usd"`로 전환 가능; USD 레이어에는 초기값만 남음).

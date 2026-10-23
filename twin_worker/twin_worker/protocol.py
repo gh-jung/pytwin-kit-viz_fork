@@ -74,6 +74,36 @@ async def read_message(reader: asyncio.StreamReader):
     return header, payload
 
 
+def _recv_exact(sock, n):
+    """Read exactly ``n`` bytes from a blocking socket into one buffer (no re-copying)."""
+    buf = bytearray(n)
+    view = memoryview(buf)
+    got = 0
+    while got < n:
+        k = sock.recv_into(view[got:], n - got)
+        if k == 0:
+            raise ConnectionError("connection closed")
+        got += k
+    return buf
+
+
+def recv_message(sock):
+    """Blocking counterpart of :func:`read_message` for a thread that owns the socket."""
+    header_len, payload_len = _PREFIX.unpack(_recv_exact(sock, _PREFIX.size))
+    if header_len > MAX_HEADER_BYTES or payload_len > MAX_PAYLOAD_BYTES:
+        raise ProtocolError(f"frame too large: header={header_len} payload={payload_len}")
+    header = json.loads(_recv_exact(sock, header_len))
+    payload = _recv_exact(sock, payload_len) if payload_len else bytearray()
+    if not isinstance(header, dict) or "type" not in header:
+        raise ProtocolError(f"invalid header: {header!r}")
+    return header, payload
+
+
+def send_message(sock, header, payload=b""):
+    """Blocking counterpart of :func:`write_message`."""
+    sock.sendall(encode(header, payload))
+
+
 def pack_arrays(arrays):
     """Pack ``{name: ndarray}`` into ``(meta_list, payload_bytes)``.
 

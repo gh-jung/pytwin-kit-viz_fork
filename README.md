@@ -40,6 +40,7 @@ cd kit-app; .\repo.bat test
 | `models_dir` | 빈 값 = `models/` | Load 목록에 보이는 `.twin` 폴더 |
 | `model_units_in_meters` | `1.0` | TBROM 좌표 단위 |
 | `write_backend` | `fabric` | 프레임 기록 경로 (`fabric` = USDRT, `usd`) |
+| `debug_worker` | `false` | `true`면 디버거(`omni.kit.debug.python`)가 워커에 붙음 — 디버깅 전용, 느림 |
 
 메쉬 표시는 [models/README.md](models/README.md)의 사이드카 파일 참고.
 
@@ -49,6 +50,8 @@ cd kit-app; .\repo.bat test
 | `scripts/inspect_twin.py` | twin 입력/출력/TBROM 정보와 스텝 시간 출력 (워커 venv) |
 | `scripts/kit_screenshot.py` | 앱을 띄워 모델 로드 → 창/뷰포트 캡처 → 종료 (`--exec`) |
 | `scripts/kit_bench.py` | 프레임 반영 성능 측정, USD vs Fabric (`--exec`) |
+| `scripts/kit_load_bench.py` + `scripts/fake_worker.py` | 대형 모델(합성 데이터) 로드·스트리밍 중 메인 스레드 멈춤 측정 (`--exec`) |
+| `scripts/kit_worker_timing.py` | 앱 기준 로드 시간, 입력 변경→프레임 지연, 워커 스텝 속도 (`--exec`) |
 | `scripts/field_check.py` | 모델별 한 줄 점검 코드 (워커 venv). 폐쇄망 절차: [docs/CLOSED_NETWORK_TEST.md](docs/CLOSED_NETWORK_TEST.md) |
 
 ## 프로토콜 변경 시

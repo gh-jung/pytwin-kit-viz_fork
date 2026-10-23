@@ -1,6 +1,7 @@
 """Launches and supervises the out-of-process twin worker."""
 
 import collections
+import contextlib
 import os
 import subprocess
 import sys
@@ -16,11 +17,47 @@ READY_TIMEOUT_S = 30.0
 LOG_LINES = 200
 
 
+@contextlib.contextmanager
+def without_debugger_hooks():
+    """Spawn processes without debugpy's subprocess injection.
+
+    omni.kit.debug.python (part of the developer bundle) patches process creation so
+    that every child Python runs under pydevd. Under that tracer the worker's Python
+    code (pytwin, mesh parsing, the server loop) runs many times slower. pydevd keeps
+    the original functions as ``original_<name>``; use them for the duration.
+    """
+    swapped = []
+    targets = []
+    if sys.platform == "win32":
+        import _winapi
+
+        targets.append((_winapi, "CreateProcess"))
+    else:
+        try:
+            import _posixsubprocess
+
+            targets.append((_posixsubprocess, "fork_exec"))
+        except ImportError:
+            pass
+        targets.append((subprocess, "_fork_exec"))
+    for module, name in targets:
+        original = getattr(module, "original_" + name, None)
+        if original is not None and getattr(module, name, None) is not original:
+            swapped.append((module, name, getattr(module, name)))
+            setattr(module, name, original)
+    try:
+        yield
+    finally:
+        for module, name, patched in swapped:
+            setattr(module, name, patched)
+
+
 class WorkerProcess:
     """Owns the worker subprocess. Blocking parts run on helper threads."""
 
-    def __init__(self, python_exe: Path, worker_root: Path):
+    def __init__(self, python_exe: Path, worker_root: Path, debuggable=False):
         self.python_exe = Path(python_exe)
+        self.debuggable = debuggable  # let omni.kit.debug.python attach to the worker
         self.worker_root = Path(worker_root)
         self.port = None
         self._proc = None
@@ -57,7 +94,14 @@ class WorkerProcess:
         carb.log_info(f"[twinviz.viewer] launching worker: {cmd}")
         self.port = None
         self._ready.clear()
-        self._proc = subprocess.Popen(
+        hooks = contextlib.nullcontext() if self.debuggable else without_debugger_hooks()
+        with hooks:
+            self._proc = self._popen(cmd, creationflags)
+        threading.Thread(target=self._read_stdout, args=(self._proc,), daemon=True).start()
+        threading.Thread(target=self._read_stderr, args=(self._proc,), daemon=True).start()
+
+    def _popen(self, cmd, creationflags):
+        return subprocess.Popen(
             cmd,
             cwd=str(self.worker_root),
             stdin=subprocess.DEVNULL,
@@ -68,8 +112,6 @@ class WorkerProcess:
             errors="replace",
             creationflags=creationflags,
         )
-        threading.Thread(target=self._read_stdout, args=(self._proc,), daemon=True).start()
-        threading.Thread(target=self._read_stderr, args=(self._proc,), daemon=True).start()
 
     def wait_ready(self, timeout=READY_TIMEOUT_S):
         """Block until the worker reports its port. Call from a thread, not the UI loop."""

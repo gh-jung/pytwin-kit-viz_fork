@@ -107,7 +107,8 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         mesh = UsdGeom.Mesh(stage.GetPrimAtPath(view.mesh_path))
         n_vertices = len(mesh.GetPointsAttr().Get())
         self.assertEqual(len(mesh.GetFaceVertexIndicesAttr().Get()), 3 * len(mesh.GetFaceVertexCountsAttr().Get()))
-        self.assertEqual(UsdGeom.Imageable(stage.GetPrimAtPath(view.path)).ComputeVisibility(), UsdGeom.Tokens.invisible)
+        # The point cloud is only authored when shown.
+        self.assertFalse(stage.GetPrimAtPath(view.path))
         self.assertEqual(self.session.mesh_stats[view.rom]["unmapped"], 0)
 
         self.session.set_input("Force_X_Component", 5.0)
@@ -125,6 +126,8 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         await wait_until(lambda: self.session.updater.settled)
         self.assertEqual(UsdGeom.Imageable(stage.GetPrimAtPath(view.mesh_path)).ComputeVisibility(),
                          UsdGeom.Tokens.invisible)
+        self.assertEqual(UsdGeom.Imageable(stage.GetPrimAtPath(view.path)).ComputeVisibility(),
+                         UsdGeom.Tokens.inherited)
 
     async def test_worker_crash_recovery(self):
         await self._load("FEADeformationTBROM_23R2.twin")
@@ -143,6 +146,7 @@ class TestViewer(omni.kit.test.AsyncTestCase):
         self.assertTrue(any("exited with code" in text for _, _, text in self.session.log))
 
     async def test_static_thermal_colors_follow_inputs(self):
+        self.session.updater.restyle(display="points")
         view = await self._load("ThermalTBROM_23R2.twin")
         self.assertEqual(self.session.mode, "static")
         self.session.set_input("main_inlet_temperature", 280.0)

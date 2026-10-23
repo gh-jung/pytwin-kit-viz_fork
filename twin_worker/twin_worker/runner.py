@@ -166,9 +166,13 @@ class TwinRunner:
                 self._mode = MODE_STATIC
         log.info("loaded in %.2fs, mode=%s", time.perf_counter() - t0, self._mode)
 
+        mesh_paths, sidecar_factor = read_sidecar(path)
+        mesh_paths.update(meshes or {})
+        if tolerance_factor is None:
+            tolerance_factor = sidecar_factor
         self._emit(self._model_info(path))
         points = self._emit_geometry()
-        self._emit_meshes(path, meshes, tolerance_factor, points)
+        self._emit_meshes(mesh_paths, tolerance_factor, points)
         self._initialize()
 
     def _has_output_modes(self, rom):
@@ -248,14 +252,10 @@ class TwinRunner:
         self._emit({"type": P.MSG_GEOMETRY, "arrays": meta}, payload)
         return arrays
 
-    def _emit_meshes(self, twin_path, meshes, tolerance_factor, points):
-        """Send surface meshes mapped onto TBROM points, from ``meshes`` or the sidecar file."""
-        mesh_paths, sidecar_factor = read_sidecar(twin_path)
-        mesh_paths.update(meshes or {})
+    def _emit_meshes(self, mesh_paths, tolerance_factor, points):
+        """Send surface meshes mapped onto TBROM points (``{rom or "*": path}``)."""
         if not mesh_paths:
             return
-        if tolerance_factor is None:
-            tolerance_factor = sidecar_factor
         locations = {rom: self._tm.get_tbrom_data_location(rom) for rom in self._tm.tbrom_names}
         try:
             arrays, stats = build_meshes(mesh_paths, points, locations, tolerance_factor)

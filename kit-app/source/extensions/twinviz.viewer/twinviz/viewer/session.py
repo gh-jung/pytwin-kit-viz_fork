@@ -4,7 +4,6 @@ import asyncio
 import time
 
 import carb
-import numpy as np
 
 from . import protocol as P
 from .client import TwinClient
@@ -18,8 +17,9 @@ RESTART_BACKOFF_S = 1.0     # doubled after every failed attempt
 
 
 class TwinSession:
-    def __init__(self, python_exe, worker_root, units_in_meters=1.0, write_backend="fabric"):
-        self.worker = WorkerProcess(python_exe, worker_root)
+    def __init__(self, python_exe, worker_root, units_in_meters=1.0, write_backend="fabric",
+                 debug_worker=False):
+        self.worker = WorkerProcess(python_exe, worker_root, debuggable=debug_worker)
         self.client = TwinClient()
         self.updater = StageUpdater(units_in_meters, write_backend)
 
@@ -72,6 +72,7 @@ class TwinSession:
         if self._recover_task is not None:
             self._recover_task.cancel()
         self.client.shutdown_worker_nowait()
+        self.client.destroy()
         self.worker.stop(timeout=3.0)
         self.updater.clear()
         self.updater.destroy()
@@ -203,21 +204,20 @@ class TwinSession:
 
     # ---- worker messages ------------------------------------------------------
 
-    def _on_model_info(self, header, _payload):
+    def _on_model_info(self, header, _arrays):
         self.model_info = header
         self.running = False
         self._notify("model")
 
-    def _on_geometry(self, header, payload):
-        self.updater.set_geometry(P.unpack_arrays(header["arrays"], payload, np))
+    def _on_geometry(self, header, arrays):
+        self.updater.set_geometry(arrays)
 
-    def _on_mesh_map(self, header, payload):
+    def _on_mesh_map(self, header, arrays):
         self.mesh_stats = header.get("stats", {})
-        self.updater.set_meshes(P.unpack_arrays(header["arrays"], payload, np))
+        self.updater.set_meshes(arrays)
         self._notify("mesh")
 
-    def _on_frame(self, header, payload):
-        arrays = P.unpack_arrays(header["arrays"], payload, np)
+    def _on_frame(self, header, arrays):
         self.updater.set_frame(header, arrays)
         self.last_frame = header
         self.frames_received += 1
@@ -230,11 +230,11 @@ class TwinSession:
         self._frame_event.set()
         self._notify("frame")
 
-    def _on_state(self, header, _payload):
+    def _on_state(self, header, _arrays):
         self.running = header["running"]
         self._notify("state")
 
-    def _on_error(self, header, _payload):
+    def _on_error(self, header, _arrays):
         self.last_error = header.get("message", "")
         self._notify("error")
 
