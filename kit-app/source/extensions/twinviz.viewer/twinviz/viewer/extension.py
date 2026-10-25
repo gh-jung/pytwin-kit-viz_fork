@@ -14,6 +14,7 @@ from .window import TwinVizWindow
 SETTINGS_ROOT = "/exts/twinviz.viewer"
 
 
+# 소스 실행과 _build 링크 실행 모두 지원하도록 실제 경로의 상위에서 워커를 찾는다.
 def _find_default_worker_root(ext_id):
     """Walk up from the extension folder to the repo's ``twin_worker`` directory.
 
@@ -50,6 +51,7 @@ def get_session():
 
 
 class TwinVizExtension(omni.ext.IExt):
+    # Kit이 확장을 활성화할 때 호출한다. 세션과 UI를 한 쌍으로 생성한다.
     def on_startup(self, ext_id):
         global _instance
         _instance = self
@@ -66,6 +68,7 @@ class TwinVizExtension(omni.ext.IExt):
         self._window = TwinVizWindow(self._session, models_dir)
         carb.log_info(f"[twinviz.viewer] worker python: {python_exe}, models: {models_dir}")
 
+    # 종료 시에는 이벤트 루프 재실행을 기대하지 않고 UI → 세션 순서로 정리한다.
     def on_shutdown(self):
         # Kit's loop may not run again, so nothing here awaits.
         global _instance

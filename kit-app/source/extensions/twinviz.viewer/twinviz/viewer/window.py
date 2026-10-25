@@ -19,6 +19,7 @@ LABEL_W = 110
 UI_REFRESH_S = 0.2
 
 
+# UI의 값/버튼을 세션 명령과 연결한다. 일반 USD 열기는 워커 없이 별도 경로로 처리한다.
 class TwinVizWindow:
     def __init__(self, session, models_dir):
         self._session = session
@@ -79,6 +80,7 @@ class TwinVizWindow:
                     ui.Button("Stop Worker", clicked_fn=lambda: self._run(self._session.stop_worker()))
                 self._error_label = ui.Label("", word_wrap=True, style={"color": 0xFF5555FF})
 
+    # models 폴더의 .twin 목록을 제공한다. 일반 USD 파일 선택은 아래 USD Scene 영역을 사용한다.
     def _build_model_section(self):
         with ui.CollapsableFrame("Model"):
             with ui.VStack(spacing=4, height=0):
@@ -92,6 +94,7 @@ class TwinVizWindow:
         names = [p.name for p in self._model_files] or ["(no .twin in models/)"]
         self._model_combo = ui.ComboBox(0, *names)
 
+    # USD는 현재 스테이지를 교체하므로 .twin 로드와 별도 버튼/상태 문구를 둔다.
     def _build_usd_section(self):
         with ui.CollapsableFrame("USD Scene"):
             with ui.VStack(spacing=4, height=0):
@@ -121,6 +124,7 @@ class TwinVizWindow:
         self._usd_dialog.hide()
         self._run(self._load_usd())
 
+    # 워커 중지 → UI 초기화 → 비동기 stage open → 곡선 purpose 변환 → 카메라 맞춤 순서다.
     async def _load_usd(self):
         from .usd_loader import default_basis_curves
 
@@ -168,6 +172,7 @@ class TwinVizWindow:
                     ui.Button("Reset", clicked_fn=lambda: self._run(self._session.reset()))
                 self._frame_label = ui.Label("")
 
+    # 모델 정보 도착 후 동적으로 입력 위젯을 만든다. 콜백 기본 인자로 각 입력 이름을 고정한다.
     def _build_inputs(self):
         info = self._session.model_info
         with ui.VStack(spacing=4, height=0):
@@ -308,6 +313,7 @@ class TwinVizWindow:
 
     # ---- actions ----------------------------------------------------------------
 
+    # 버튼 coroutine의 busy 상태와 오류 표시를 공통 처리한다. queue=True는 짧은 설정 전송용이다.
     def _run(self, coro, queue=False):
         """Run an action; ``queue`` = run even while another action is busy (quick sends)."""
         if self._busy and not queue:
@@ -367,6 +373,7 @@ class TwinVizWindow:
 
     # ---- session updates --------------------------------------------------------
 
+    # 모델/메쉬/오류는 즉시, 프레임 UI는 주기를 제한해 고빈도 결과 수신의 UI 부하를 줄인다.
     def _on_session_changed(self, what):
         if what == "model":
             info = self._session.model_info

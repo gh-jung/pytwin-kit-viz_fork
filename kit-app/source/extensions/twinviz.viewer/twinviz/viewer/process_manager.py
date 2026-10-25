@@ -18,6 +18,7 @@ LOG_LINES = 200
 
 
 @contextlib.contextmanager
+# Kit 디버거의 자식 프로세스 주입을 잠시 우회해 워커 계산 성능 저하를 줄인다.
 def without_debugger_hooks():
     """Spawn processes without debugpy's subprocess injection.
 
@@ -78,6 +79,7 @@ class WorkerProcess:
     def running(self):
         return self._proc is not None and self._proc.poll() is None
 
+    # 포트 0으로 충돌을 피하고 부모 PID를 전달해 워커가 Kit 종료를 감시하게 한다.
     def start(self):
         if self.running:
             return
@@ -113,6 +115,7 @@ class WorkerProcess:
             creationflags=creationflags,
         )
 
+    # stdout 준비 메시지는 읽기 스레드가 처리한다. UI 스레드에서 직접 기다리지 않는다.
     def wait_ready(self, timeout=READY_TIMEOUT_S):
         """Block until the worker reports its port. Call from a thread, not the UI loop."""
         if not self._ready.wait(timeout):
@@ -121,6 +124,7 @@ class WorkerProcess:
             raise RuntimeError("worker exited before becoming ready")
         return self.port
 
+    # 정상 종료를 기다린 뒤 제한 시간을 넘긴 프로세스만 강제 종료한다.
     def stop(self, timeout=5.0):
         proc, self._proc = self._proc, None
         if proc is None:
@@ -133,6 +137,7 @@ class WorkerProcess:
             proc.wait()
         carb.log_info(f"[twinviz.viewer] worker exited with {proc.returncode}")
 
+    # 준비 메시지에서 TCP 포트를 추출하고 나머지 출력은 로그 패널에 축적한다.
     def _read_stdout(self, proc):
         for line in proc.stdout:
             line = line.strip()

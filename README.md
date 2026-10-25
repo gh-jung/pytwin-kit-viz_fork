@@ -24,6 +24,14 @@ cd kit-app
 .\repo.bat launch -n twinviz.app.kit
 ```
 
+## USD 장면 로드
+
+TwinViz Viewer의 **USD Scene**에서 경로를 입력하고 **Load USD**를 누르거나 **Browse**로
+`.usd`, `.usda`, `.usdc`, `.usdz` 파일을 선택합니다. 기존 워커를 정지하고 새 스테이지로 엽니다.
+스테이지의 모든 BasisCurves를 탐색해 `purpose = default`를 세션 레이어에 설정하고 개수를 표시합니다.
+참조된 곡선과 비활성 곡선도 포함하며, 인스턴스 내부 곡선은 해당 인스턴스를 세션에서 풀어 수정합니다.
+원본 USD 파일은 자동 저장하지 않습니다. 기존 `.twin` 모델 로드 기능도 그대로 사용할 수 있습니다.
+
 ## 테스트
 ```powershell
 # 워커 단독

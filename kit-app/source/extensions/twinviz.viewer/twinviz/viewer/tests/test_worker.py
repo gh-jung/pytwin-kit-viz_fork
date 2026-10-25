@@ -1,3 +1,4 @@
+# 통합 테스트: 워커 준비 → hello → ping 왕복 → 종료를 검증한다. 워커 venv가 필요하다.
 import asyncio
 
 import omni.kit.app

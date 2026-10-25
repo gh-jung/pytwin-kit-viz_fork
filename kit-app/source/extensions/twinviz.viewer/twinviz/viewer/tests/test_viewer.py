@@ -1,3 +1,4 @@
+# Kit 렌더링 통합 검증. 실모델 파일이 필요한 테스트는 모델이 없으면 skip한다.
 """Load the example TBROM twins through the session and check the USD result.
 
 Skipped when ``models/`` does not contain the example files.

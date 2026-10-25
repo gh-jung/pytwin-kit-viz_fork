@@ -56,6 +56,7 @@ class ProtocolError(Exception):
     pass
 
 
+# 고정 8바이트 prefix 뒤에 JSON과 binary payload를 이어 붙인다. 길이는 바이트 단위다.
 def encode(header, payload=b""):
     header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
     return _PREFIX.pack(len(header_bytes), len(payload)) + header_bytes + payload
@@ -66,6 +67,7 @@ async def write_message(writer: asyncio.StreamWriter, header, payload=b""):
     await writer.drain()
 
 
+# asyncio 서버용 수신 경로. Kit 수신 스레드는 아래 blocking recv_message를 사용한다.
 async def read_message(reader: asyncio.StreamReader):
     """Return ``(header, payload)``. Raises ``asyncio.IncompleteReadError`` on EOF."""
     prefix = await reader.readexactly(_PREFIX.size)
@@ -109,6 +111,7 @@ def send_message(sock, header, payload=b""):
     sock.sendall(encode(header, payload))
 
 
+# 배열 이름/자료형/차원/바이트 위치를 JSON에 넣고 실제 수치는 연속 binary로 전송한다.
 def pack_arrays(arrays):
     """Pack ``{name: ndarray}`` into ``(meta_list, payload_bytes)``.
 
@@ -132,6 +135,7 @@ def pack_arrays(arrays):
     return meta, b"".join(chunks)
 
 
+# frombuffer 결과는 payload 메모리를 공유한다. 수신 배열을 수정하려면 별도 복사가 필요하다.
 def unpack_arrays(meta, payload, np):
     """Inverse of :func:`pack_arrays`; ``np`` is the caller's numpy module."""
     view = memoryview(payload)

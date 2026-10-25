@@ -79,6 +79,7 @@ def _extent(points):
     return Vt.Vec3fArray([Gf.Vec3f(*map(float, lo)), Gf.Vec3f(*map(float, hi))])
 
 
+# Vec3 배열 기록 경로를 숨긴다. Fabric 기록 실패 시 해당 writer는 USD 방식으로 전환한다.
 class _ArrayWriter:
     """Writes Vec3f arrays to one prim through USDRT/Fabric or plain USD."""
 
@@ -125,6 +126,7 @@ def _usdrt():
     return usdrt
 
 
+# TBROM 원본 점 또는 매핑된 메쉬 한 개의 표시 데이터를 관리한다. index=-1은 회색 처리한다.
 class _Layer:
     """A colored point set backed by one prim: the TBROM points or a mapped mesh surface.
 
@@ -178,6 +180,7 @@ class _Layer:
             self._deformed = False
 
 
+# ROM별 표시 객체. 메쉬가 없으면 points로 대체하며 필요한 표현만 지연 생성한다.
 class FieldView:
     """Prims for one TBROM: a ``UsdGeom.Points`` cloud and/or a mapped mesh.
 
@@ -283,6 +286,7 @@ class FieldView:
             self.commit(prepared, style["display"])
 
 
+# 수신 결과를 pending 슬롯에 넣고 Kit 업데이트에서 장면 생성 → 준비 → 커밋 순으로 처리한다.
 class StageUpdater:
     def __init__(self, units_in_meters=1.0, backend=BACKEND_FABRIC):
         self.units_in_meters = units_in_meters
@@ -345,6 +349,7 @@ class StageUpdater:
         """Derived geometry (``post`` message); applied on the next update tick."""
         self._pending_post = (header, arrays)
 
+    # 스타일 버전을 올리고 마지막 필드를 재사용해 새 계산 없이 컬러맵/표시를 갱신한다.
     def restyle(self, **style):
         """Change colormap/range/deformation/display and re-apply the last frame."""
         self.style.update(style)
@@ -352,6 +357,7 @@ class StageUpdater:
         if self._pending_frame is None and self._last_frame is not None:
             self._pending_frame = self._last_frame
 
+    # 대기 데이터를 비우고 세대를 변경해 이전 모델을 위해 계산 중이던 결과의 커밋을 차단한다.
     def clear(self):
         self._pending_geometry = None
         self._pending_post = None
@@ -382,6 +388,7 @@ class StageUpdater:
             raise LookupError(f"{rom}: {'mesh' if mesh else 'points'} prim not created (never shown)")
         return layer.writer.get(name)
 
+    # USD/USDRT 변경은 이 메인 스레드 경로에서만 수행한다. post 형상도 여기서 반영한다.
     def _on_update(self):
         if (self._pending_geometry is None and self._pending_meshes is None
                 and self._pending_frame is None and self._job is None and self._pending_post is None):
@@ -407,6 +414,7 @@ class StageUpdater:
             self._pending_frame = None
             self._job = None
 
+    # 스타일과 view 사본을 캡처한다. 백그라운드 작업은 numpy 배열 준비만 수행한다.
     def _submit(self, frame):
         _, arrays = frame
         style = dict(self.style)
@@ -420,6 +428,7 @@ class StageUpdater:
 
         self._job = (self._executor.submit(prepare), self._generation, style["display"], self.style_version)
 
+    # 완료된 작업의 모델 세대를 확인한다. 스타일 버전은 settled 판정에 사용한다.
     def _commit_finished_job(self):
         if self._job is None or not self._job[0].done():
             return
@@ -439,6 +448,7 @@ class StageUpdater:
             self._frame_on_commit = False
             self.on_geometry_built([ROOT_PATH])
 
+    # 모델 좌표를 스테이지 metersPerUnit에 맞춰 /World/TwinViz 루트에서 한 번에 스케일한다.
     def _build(self, arrays):
         stage = omni.usd.get_context().get_stage()
         if stage is None:

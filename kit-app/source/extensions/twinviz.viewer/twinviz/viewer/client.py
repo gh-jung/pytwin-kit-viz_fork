@@ -23,6 +23,7 @@ from . import protocol as P
 SOCKET_BUFFER = 8 * 1024 * 1024
 
 
+# 수신 스레드는 데이터만 준비하고, 등록된 핸들러는 메인 스레드 pump에서 호출한다.
 class TwinClient:
     def __init__(self):
         self.hello = None
@@ -50,6 +51,7 @@ class TwinClient:
         """Register ``handler(header, arrays)``; ``arrays`` is ``{name: ndarray}`` (empty if none)."""
         self._handlers[msg_type] = handler
 
+    # hello의 프로토콜 버전을 확인한 뒤 수신 전용 스레드를 시작한다.
     async def connect(self, port, host="127.0.0.1", timeout=5.0):
         def blocking_connect():
             sock = socket.create_connection((host, port), timeout=timeout)
@@ -88,6 +90,7 @@ class TwinClient:
             self._pending_pings.pop(seq, None)
         return loop.time() - t0
 
+    # async 인터페이스지만 실제 전송은 잠금으로 직렬화한 blocking sendall이다.
     async def send(self, header, payload=b""):
         sock = self._sock
         if sock is None:
@@ -138,6 +141,7 @@ class TwinClient:
 
     # ---- reader thread --------------------------------------------------------
 
+    # 일반 메시지는 순서를 보존하고 frame/post는 종류별 최신 메시지 하나만 유지한다.
     def _read_loop(self, sock):
         try:
             while True:
@@ -162,6 +166,7 @@ class TwinClient:
 
     # ---- main thread ------------------------------------------------------------
 
+    # Kit 업데이트마다 호출되는 경계: 여기부터 세션 콜백은 메인 스레드에서 실행된다.
     def pump(self):
         """Dispatch received messages on the main thread (called every app update)."""
         if not self._inbox and not self._latest:

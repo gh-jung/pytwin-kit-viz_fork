@@ -1,3 +1,4 @@
+# 모델/워커 없이 OpenUSD만으로 purpose, 상속, 인스턴스, 원본 레이어 보존을 검증한다.
 """USD-only tests; no model files or worker required."""
 
 import importlib.util

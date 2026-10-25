@@ -16,6 +16,7 @@ MAX_RESTARTS = 3            # consecutive automatic restarts before giving up
 RESTART_BACKOFF_S = 1.0     # doubled after every failed attempt
 
 
+# UI 요청과 워커 결과를 중계한다. PyTwin 계산이나 USD 속성 기록 자체는 담당하지 않는다.
 class TwinSession:
     def __init__(self, python_exe, worker_root, units_in_meters=1.0, write_backend="fabric",
                  debug_worker=False, max_points=1_000_000):
@@ -84,6 +85,7 @@ class TwinSession:
 
     # ---- worker lifecycle ---------------------------------------------------
 
+    # 프로세스 준비 대기는 executor에 맡겨 Kit 이벤트 루프를 막지 않는다.
     async def start_worker(self):
         if self.client.connected:
             return self.client.hello
@@ -93,6 +95,7 @@ class TwinSession:
         self._notify("connection")
         return hello
 
+    # 의도적인 종료 표시와 복구 인자 제거로 연결 종료 후 자동 재시작을 방지한다.
     async def stop_worker(self):
         self._stopping = True
         self._load_args = None
@@ -112,6 +115,7 @@ class TwinSession:
 
     # ---- commands -------------------------------------------------------------
 
+    # 이 함수의 완료는 명령 전송 완료다. 모델/첫 프레임 완료는 이후 수신 콜백으로 확인한다.
     async def load(self, path, meshes=None):
         """Load a twin; ``meshes`` ({rom or "*": path}) overrides the model's sidecar file."""
         await self.start_worker()
@@ -152,6 +156,7 @@ class TwinSession:
         if self._recover_task is None or self._recover_task.done():
             self._recover_task = asyncio.ensure_future(self._recover())
 
+    # 모델과 입력, 실행 설정을 다시 보낸다. 이전 시뮬레이션 시간이나 내부 상태는 복원하지 않는다.
     async def _recover(self):
         """Restart a crashed worker and restore model, inputs and run state."""
         inputs = dict(self.last_frame["inputs"]) if self.last_frame else {}
@@ -187,18 +192,21 @@ class TwinSession:
         finally:
             self.recovering = False
 
+    # 연결 전에도 설정을 저장하며, 다음 load에서 후처리 설정 전체를 다시 전송한다.
     async def set_post(self, **settings):
         """Change contours/isosurfaces/streamlines; sent now if connected, else on the next load."""
         self.post_settings.update(settings)
         if self.client.connected:
             await self.client.send({"type": P.MSG_SET_POST, "settings": settings})
 
+    # 같은 입력 이름의 대기 값을 덮어써 슬라이더 이동 중 오래된 요청의 누적을 줄인다.
     def set_input(self, name, value):
         """Coalesce rapid slider changes into throttled ``set_inputs`` messages."""
         self._pending_inputs[name] = float(value)
         if self._input_task is None or self._input_task.done():
             self._input_task = asyncio.ensure_future(self._flush_inputs())
 
+    # static은 다음 프레임(최대 30초), dynamic은 50ms를 기다린 뒤 대기 입력을 재전송한다.
     async def _flush_inputs(self):
         while self._pending_inputs and self.client.connected:
             inputs, self._pending_inputs = self._pending_inputs, {}
@@ -232,6 +240,7 @@ class TwinSession:
     def _on_post(self, header, arrays):
         self.updater.set_post(header, arrays)
 
+    # fps는 이 콜백이 처리한 데이터 프레임 빈도이며 GPU 렌더링 FPS가 아니다.
     def _on_frame(self, header, arrays):
         self.updater.set_frame(header, arrays)
         self.last_frame = header
@@ -253,6 +262,7 @@ class TwinSession:
         self.last_error = header.get("message", "")
         self._notify("error")
 
+    # UI는 단일 on_changed 콜백으로 연결된다. UI 예외가 통신 처리를 중단하지 않게 격리한다.
     def _notify(self, what):
         if self.on_changed is not None:
             try:

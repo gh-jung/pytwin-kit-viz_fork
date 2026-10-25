@@ -24,6 +24,7 @@ def _fields(arrays, rom, kind):
     return {k[len(prefix):]: v for k, v in arrays.items() if k.startswith(prefix)}
 
 
+# 워커의 파생 형상 전용 표시 계층. 기본 points/mesh의 Fabric 프레임 갱신과 구분된다.
 class Overlays:
     def __init__(self, material_path, emission_primvar, emission_gain):
         self._material_path = material_path
@@ -36,6 +37,7 @@ class Overlays:
         self.paths.clear()
         self.last_items = []
 
+    # 이번 post 메시지에 없는 (ROM, 종류)의 prim은 제거해 이전 결과가 남지 않게 한다.
     def apply(self, stage, views, header, arrays, style):
         present = set()
         for item in header.get("items", []):
@@ -71,6 +73,7 @@ class Overlays:
         if material:
             UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
 
+    # 모든 선을 하나의 BasisCurves 배열로 기록한다. counts가 각 선의 points 구간을 정의한다.
     def _curves(self, stage, path, data, kind, diag):
         counts = np.asarray(data.get("counts", np.zeros(0, np.int32)), dtype=np.int32)
         points = np.asarray(data.get("points", np.zeros((0, 3), np.float32)), dtype=np.float32)
@@ -96,6 +99,7 @@ class Overlays:
             self._colors(curves.GetPrim(), colormap.apply(scalars, vmin, vmax), UsdGeom.Tokens.vertex)
         self._bind(curves.GetPrim(), stage)
 
+    # 등치면은 삼각형 Mesh로 만들고 레벨 값을 컬러맵에 대응시킨다.
     def _surface(self, stage, path, data, item, style):
         points = np.asarray(data.get("points", np.zeros((0, 3), np.float32)), dtype=np.float32)
         faces = np.asarray(data.get("faces", np.zeros((0, 3), np.int32)), dtype=np.int32)

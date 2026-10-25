@@ -30,11 +30,13 @@ _LUT_SIZE = 256
 _LUTS = {}
 
 
+# 화면용 sRGB 팔레트를 USD/RTX에서 해석하는 선형 색공간으로 변환한다.
 def srgb_to_linear(c):
     c = np.asarray(c, dtype=np.float32)
     return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4).astype(np.float32)
 
 
+# 컬러맵 이름과 색공간 조합별 256색 lookup table을 캐시해 프레임마다 보간하지 않는다.
 def _lut(name, linear):
     lut = _LUTS.get((name, linear))
     if lut is None:
@@ -48,6 +50,7 @@ def _lut(name, linear):
     return lut
 
 
+# 다성분 필드는 크기로 색칠한다. 실제 변형에는 원래 벡터 배열을 별도로 사용한다.
 def scalarize(values):
     """Field values (N,) or (N, k) -> (N,) float32; vectors use their magnitude."""
     values = np.asarray(values, dtype=np.float32)
@@ -56,6 +59,7 @@ def scalarize(values):
     return values
 
 
+# 값을 표시 범위로 정규화하고 NaN/Inf를 유효한 색 인덱스로 치환한다.
 def apply(scalars, vmin, vmax, name="turbo", linear=True, bands=0):
     """(N,) scalars -> (N, 3) float32 RGB in [0, 1].
 
