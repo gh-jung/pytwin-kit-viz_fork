@@ -8,6 +8,8 @@ import carb
 import carb.eventdispatcher
 import omni.kit.app
 import omni.ui as ui
+import omni.usd
+from omni.kit.window.filepicker import FilePickerDialog
 
 from . import colormap
 from .stage_updater import DISPLAY_MESH, DISPLAY_NONE, DISPLAY_POINTS
@@ -25,6 +27,7 @@ class TwinVizWindow:
         self._busy = False
         self._last_ui_refresh = 0.0
         self._output_labels = {}
+        self._usd_dialog = None
 
         session.on_changed = self._on_session_changed
         session.updater.on_geometry_built = self._frame_prims
@@ -37,6 +40,7 @@ class TwinVizWindow:
                 with ui.VStack(spacing=6, height=0):
                     self._build_worker_section()
                     self._build_model_section()
+                    self._build_usd_section()
                     self._build_run_section()
                     self._inputs_frame = ui.CollapsableFrame("Inputs", build_fn=self._build_inputs)
                     self._outputs_frame = ui.CollapsableFrame("Outputs", build_fn=self._build_outputs)
@@ -51,6 +55,9 @@ class TwinVizWindow:
         )
 
     def destroy(self):
+        if self._usd_dialog is not None:
+            self._usd_dialog.destroy()
+            self._usd_dialog = None
         self._log_sub = None
         self._session.on_changed = None
         self._session.updater.on_geometry_built = None
@@ -84,6 +91,64 @@ class TwinVizWindow:
     def _build_model_combo(self):
         names = [p.name for p in self._model_files] or ["(no .twin in models/)"]
         self._model_combo = ui.ComboBox(0, *names)
+
+    def _build_usd_section(self):
+        with ui.CollapsableFrame("USD Scene"):
+            with ui.VStack(spacing=4, height=0):
+                with ui.HStack(height=24, spacing=4):
+                    self._usd_path = ui.StringField()
+                    ui.Button("Browse", width=70, clicked_fn=self._browse_usd)
+                ui.Button("Load USD", height=26,
+                          clicked_fn=lambda: self._run(self._load_usd()))
+                ui.Label("Opens a new stage. All BasisCurves purpose values become default.",
+                         word_wrap=True)
+                self._usd_label = ui.Label("no USD scene", word_wrap=True)
+
+    def _browse_usd(self):
+        if self._usd_dialog is None:
+            self._usd_dialog = FilePickerDialog(
+                "Open USD Scene", apply_button_label="Open",
+                click_apply_handler=self._select_usd,
+                click_cancel_handler=lambda *_: self._usd_dialog.hide(),
+                item_filter_fn=lambda item: not item or item.is_folder or
+                    item.path.lower().endswith((".usd", ".usda", ".usdc", ".usdz")),
+            )
+        self._usd_dialog.show()
+
+    def _select_usd(self, filename, dirname):
+        directory = dirname.replace("\\", "/").rstrip("/")
+        self._usd_path.model.set_value(f"{directory}/{filename}" if directory else filename)
+        self._usd_dialog.hide()
+        self._run(self._load_usd())
+
+    async def _load_usd(self):
+        from .usd_loader import default_basis_curves
+
+        path = self._usd_path.model.as_string.strip().strip('"')
+        if not path.lower().endswith((".usd", ".usda", ".usdc", ".usdz")):
+            raise ValueError("Select a .usd, .usda, .usdc or .usdz file")
+        # Stop old frames before replacing their stage (also disables recovery).
+        await self._session.stop_worker()
+        self._session.last_frame = None
+        self._session.mesh_stats = {}
+        self._inputs_frame.rebuild()
+        self._outputs_frame.rebuild()
+        self._seed_frame.rebuild()
+        self._model_label.text = "no twin model"
+        self._frame_label.text = ""
+        self._range_label.text = ""
+        self._usd_label.text = f"loading {path}..."
+        context = omni.usd.get_context()
+        success, error = await context.open_stage_async(path)
+        if not success:
+            self._usd_label.text = "USD load failed"
+            raise RuntimeError(f"Could not open USD: {error}")
+        stage = context.get_stage()
+        paths, expanded = default_basis_curves(stage)
+        self._usd_label.text = (f"{path}\nBasisCurves: {len(paths)}; purpose: default"
+                                f"\nExpanded curve instances: {expanded}")
+        carb.log_info(f"[twinviz.viewer] USD loaded: {len(paths)} BasisCurves set to default")
+        self._frame_prims([str(p.GetPath()) for p in stage.GetPseudoRoot().GetChildren()])
 
     def _build_run_section(self):
         with ui.CollapsableFrame("Run"):

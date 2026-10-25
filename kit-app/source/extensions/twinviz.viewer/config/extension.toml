@@ -26,6 +26,7 @@ readme  = "docs/README.md"  # Path (relative to the root) or content of readme m
 "omni.usd" = {}
 "usdrt.scenegraph" = {}
 "omni.kit.viewport.utility" = {}
+"omni.kit.window.filepicker" = {}
 
 
 [settings]
